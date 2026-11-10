@@ -1,0 +1,41 @@
+[
+  {
+    "id": "official.echo",
+    "name": {
+      "zh-Hans": "回显示例",
+      "en": "Echo Example",
+      "zh-Hant": "回顯示例"
+    },
+    "summary": {
+      "zh-Hans": "最小可用的插件：输入 echo 加文本，结果里原样返回，回车即可复制。",
+      "en": "The minimal working plugin: type echo plus text, results come back verbatim, Enter copies.",
+      "zh-Hant": "最小可用的外掛程式：輸入 echo 加文字，結果中原樣返回，按 Enter 即可複製。"
+    }
+  },
+  {
+    "id": "official.devtools",
+    "name": {
+      "zh-Hans": "开发工具",
+      "en": "Dev Tools",
+      "zh-Hant": "開發工具"
+    },
+    "summary": {
+      "zh-Hans": "离线文本工具：时间戳与时区、UUID、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要。",
+      "en": "Offline text tools: timestamps and time zones, UUIDs, JSON validation and formatting, Base64 and URL codecs, regex matching, digests.",
+      "zh-Hant": "離線文字工具：時間戳與時區、UUID、JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要。"
+    }
+  },
+  {
+    "id": "official.clipboard",
+    "name": {
+      "zh-Hans": "剪贴板历史",
+      "en": "Clipboard History",
+      "zh-Hant": "剪貼簿歷史"
+    },
+    "summary": {
+      "zh-Hans": "记录复制过的文本：仅内存、最多 50 条、退出即清空，搜索后回车复制。",
+      "en": "Remembers copied text in memory only (50 items, cleared on exit); search and press Enter to copy.",
+      "zh-Hant": "記錄複製過的文字：僅限記憶體、最多 50 條、離開即清空，搜尋後按 Enter 複製。"
+    }
+  }
+]

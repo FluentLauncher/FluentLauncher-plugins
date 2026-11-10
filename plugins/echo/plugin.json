@@ -1,0 +1,10 @@
+{
+  "id": "official.echo",
+  "name": "回显示例",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "executable": "echo.exe",
+  "keywords": ["echo"],
+  "permissions": [],
+  "description": "演示查询结果和复制动作。插件是可执行文件，权限字段仅作声明。"
+}

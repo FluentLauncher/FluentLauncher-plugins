@@ -1,0 +1,10 @@
+{
+  "id": "official.clipboard",
+  "name": "剪贴板历史",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "executable": "clipboard.exe",
+  "keywords": ["clip", "clipboard", "剪贴板"],
+  "permissions": [],
+  "description": "记录复制过的文本（仅内存、最多 50 条、退出即清空），输入 clip 搜索，回车复制。"
+}

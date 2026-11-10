@@ -1,0 +1,10 @@
+{
+  "id": "official.devtools",
+  "name": "开发工具",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "executable": "devtools.exe",
+  "keywords": ["time", "uuid", "json", "base64", "urlencode", "hash", "regex"],
+  "permissions": [],
+  "description": "离线文本工具：时间戳与时区换算、UUID 生成、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、SHA-256/SHA-1/MD5 摘要。只做文本转换，不执行输入中的任何代码，不访问网络。"
+}

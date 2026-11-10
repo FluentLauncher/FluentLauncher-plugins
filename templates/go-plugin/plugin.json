@@ -1,0 +1,10 @@
+{
+  "id": "vendor.example",
+  "name": "我的插件",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "executable": "example.exe",
+  "keywords": ["example"],
+  "permissions": [],
+  "description": "输入 example 加文本，返回可复制的结果"
+}

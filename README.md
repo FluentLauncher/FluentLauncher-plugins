@@ -36,6 +36,8 @@ Pop-Location
 4. 在模板目录执行 `go build -o example.exe .`。首次 SDK 版本尚未发布时，可临时 `go mod edit -replace github.com/FluentLauncher/FluentLauncher-plugins/sdk=<本地 SDK 路径>`。
 5. 将 EXE 与 `plugin.json` 打 ZIP，使用启动器安装。日志写 stderr，stdout 只能写协议帧。
 
+新 SDK 标签发布后，部分 Go 镜像可能尚未同步；如遇校验服务提示暂不可用，可仅在当前 PowerShell 会话设置 `$env:GOPROXY = 'https://proxy.golang.org,direct'` 后重试 `go mod tidy`。保留模块校验，不需要本地 replace。
+
 完整协议见 [docs/protocol.md](docs/protocol.md)。插件是受信任的本地代码，进程隔离并非安全沙箱。
 
 ## 发布

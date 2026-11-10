@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mistquay/FluentLauncher-plugins/sdk"
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk"
 )
 
 func TestQueryReturnsTheTypedText(t *testing.T) {

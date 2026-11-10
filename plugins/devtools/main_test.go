@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mistquay/FluentLauncher-plugins/sdk"
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk"
 )
 
 // The handler answers a routed keyword the way the launcher sends it: the

@@ -37,7 +37,7 @@ type manifest struct {
 
 func main() {
 	tag := flag.String("tag", "local", "release tag")
-	repository := flag.String("repository", "mistquay/FluentLauncher-plugins", "public release repository")
+	repository := flag.String("repository", "FluentLauncher/FluentLauncher-plugins", "public release repository")
 	signed := flag.Bool("signed", false, "sign the exact catalogue bytes")
 	flag.Parse()
 	if err := build(*tag, *repository, *signed); err != nil {

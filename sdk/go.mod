@@ -1,3 +1,3 @@
-module github.com/mistquay/FluentLauncher-plugins/sdk
+module github.com/FluentLauncher/FluentLauncher-plugins/sdk
 
 go 1.27.3

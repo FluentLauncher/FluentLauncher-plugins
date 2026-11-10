@@ -1,5 +1,7 @@
 # FluentLauncher 官方插件与开发示例
 
+[插件下载与签名目录](https://github.com/FluentLauncher/FluentLauncher-plugins/releases/latest) · [启动器](https://github.com/FluentLauncher/FluentLauncher)
+
 官方插件独立于启动器分发，启动器只有在用户选择安装或更新时下载对应 ZIP。主程序更新不替换插件。
 
 | 目录 | 用途 |
@@ -29,9 +31,9 @@ Pop-Location
 ## 开发自己的插件
 
 1. 将 `templates/go-plugin` 复制到新项目，修改模块名、`plugin.json` 的 ID、名称、关键词。
-2. 使用发布的 SDK 模块：`github.com/mistquay/FluentLauncher-plugins/sdk v0.1.0`。维护者应先发布 `sdk/v0.1.0` 标签；本仓库通过根 go.mod 的本地 replace 在发布前开发。
+2. 使用发布的 SDK 模块：`github.com/FluentLauncher/FluentLauncher-plugins/sdk v0.1.0`。维护者应先发布 `sdk/v0.1.0` 标签；本仓库通过根 go.mod 的本地 replace 在发布前开发。
 3. 实现 `Query` 与 `Execute`，用 `ServeFromManifest` 启动。SDK 从程序同目录读取 manifest，避免握手 ID 不一致。
-4. 在模板目录执行 `go build -o example.exe .`。首次 SDK 版本尚未发布时，可临时 `go mod edit -replace github.com/mistquay/FluentLauncher-plugins/sdk=<本地 SDK 路径>`。
+4. 在模板目录执行 `go build -o example.exe .`。首次 SDK 版本尚未发布时，可临时 `go mod edit -replace github.com/FluentLauncher/FluentLauncher-plugins/sdk=<本地 SDK 路径>`。
 5. 将 EXE 与 `plugin.json` 打 ZIP，使用启动器安装。日志写 stderr，stdout 只能写协议帧。
 
 完整协议见 [docs/protocol.md](docs/protocol.md)。插件是受信任的本地代码，进程隔离并非安全沙箱。

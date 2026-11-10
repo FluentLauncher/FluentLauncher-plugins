@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mistquay/FluentLauncher-plugins/sdk"
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk"
 )
 
 // history is the process-wide clipboard ring; the watcher fills it, queries

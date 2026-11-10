@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/mistquay/FluentLauncher-plugins/sdk"
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk"
 )
 
 type handler struct{}

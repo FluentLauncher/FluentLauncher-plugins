@@ -1,10 +1,27 @@
 {
   "id": "official.clipboard",
   "name": "剪贴板历史",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "protocolVersion": 1,
   "executable": "clipboard.exe",
-  "keywords": ["clip", "clipboard", "剪贴板"],
+  "keywords": [
+    "clip",
+    "clipboard",
+    "剪贴板"
+  ],
   "permissions": [],
-  "description": "记录复制过的文本（仅内存、最多 50 条、退出即清空），输入 clip 搜索，回车复制。"
+  "description": "记录复制过的文本（仅内存、最多 50 条、退出即清空），输入 clip 搜索，回车复制。",
+  "commands": [
+    {
+      "id": "show-history",
+      "title": "打开剪贴板历史",
+      "description": "打开启动器并查看已记录的文本",
+      "scope": "global",
+      "defaultShortcuts": [
+        "Ctrl+Alt+V"
+      ],
+      "activation": "showQuery",
+      "query": "clip "
+    }
+  ]
 }

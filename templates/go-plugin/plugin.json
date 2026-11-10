@@ -4,7 +4,19 @@
   "version": "1.0.0",
   "protocolVersion": 1,
   "executable": "example.exe",
-  "keywords": ["example"],
+  "keywords": [
+    "example"
+  ],
   "permissions": [],
-  "description": "输入 example 加文本，返回可复制的结果"
+  "description": "输入 example 加文本，返回可复制的结果",
+  "commands": [
+    {
+      "id": "show-plugin",
+      "title": "打开我的插件",
+      "scope": "global",
+      "defaultShortcuts": [],
+      "activation": "showQuery",
+      "query": "example "
+    }
+  ]
 }

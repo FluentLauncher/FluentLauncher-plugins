@@ -106,8 +106,21 @@ type ExecuteRequest struct {
 }
 
 type InitializeResult struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	PluginID        string `json:"pluginId"`
+	ProtocolVersion int      `json:"protocolVersion"`
+	PluginID        string   `json:"pluginId"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+}
+
+// ExecuteCommandRequest identifies a stable command declared in plugin.json.
+type ExecuteCommandRequest struct {
+	CommandID string `json:"commandId"`
+}
+
+// CommandHandler is optional. Implement it for result-independent invoke
+// commands. Query-opening commands need no additional handler. Long-running
+// interactive work should return after starting and complete asynchronously.
+type CommandHandler interface {
+	ExecuteCommand(context.Context, ExecuteCommandRequest) error
 }
 
 // Handler is what a plugin implements.
@@ -296,7 +309,11 @@ func (s *server) finish(key string) {
 func (s *server) handle(ctx context.Context, req request) (any, error) {
 	switch req.Method {
 	case "initialize":
-		return InitializeResult{ProtocolVersion: ProtocolVersion, PluginID: s.pluginID}, nil
+		result := InitializeResult{ProtocolVersion: ProtocolVersion, PluginID: s.pluginID}
+		if _, ok := s.handler.(CommandHandler); ok {
+			result.Capabilities = []string{"executeCommand"}
+		}
+		return result, nil
 	case "ping":
 		return "pong", nil
 	case "query":
@@ -312,6 +329,19 @@ func (s *server) handle(ctx context.Context, req request) (any, error) {
 			results = []Result{}
 		}
 		return QueryResult{Results: results}, nil
+	case "executeCommand":
+		handler, ok := s.handler.(CommandHandler)
+		if !ok {
+			return nil, errors.New("插件未实现 executeCommand")
+		}
+		var command ExecuteCommandRequest
+		if err := json.Unmarshal(req.Params, &command); err != nil || command.CommandID == "" {
+			return nil, errors.New("命令参数无效")
+		}
+		if err := handler.ExecuteCommand(ctx, command); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
 	case "execute":
 		var execute ExecuteRequest
 		if err := json.Unmarshal(req.Params, &execute); err != nil {

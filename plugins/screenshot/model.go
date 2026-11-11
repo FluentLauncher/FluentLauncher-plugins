@@ -8,11 +8,16 @@ import (
 
 // All geometry is in physical desktop pixels, including negative monitor origins.
 type pinState struct {
-	Original image.Rectangle
-	Bounds   image.Rectangle
-	Shadow   bool
-	Locked   bool
-	Hidden   bool
+	Original         image.Rectangle
+	Bounds           image.Rectangle
+	Shadow           bool
+	Locked           bool
+	Hidden           bool
+	Topmost          bool
+	Taskbar          bool
+	Opacity          int
+	Angle            int
+	MirrorX, MirrorY bool
 }
 
 func (p *pinState) move(dx, dy int) {
@@ -45,9 +50,51 @@ func (p *pinState) zoom(factor float64) {
 	if p.Locked {
 		return
 	}
-	w := min(max(int(math.Round(float64(p.Bounds.Dx())*factor)), min(8, p.Original.Dx())), max(p.Original.Dx(), min(p.Original.Dx()*4, 8192)))
-	h := max(1, int(math.Round(float64(w)*float64(p.Original.Dy())/float64(p.Original.Dx()))))
+	natural := p.naturalSize()
+	w := min(max(int(math.Round(float64(p.Bounds.Dx())*factor)), min(8, natural.X)), max(natural.X, min(natural.X*4, 8192)))
+	h := max(1, int(math.Round(float64(w)*float64(natural.Y)/float64(natural.X))))
 	p.Bounds.Max = p.Bounds.Min.Add(image.Pt(w, h))
+}
+
+func (p *pinState) naturalSize() image.Point {
+	size := p.Original.Size()
+	if p.Angle%2 != 0 {
+		return image.Pt(size.Y, size.X)
+	}
+	return size
+}
+
+func transformed(source *image.RGBA, state pinState) *image.RGBA {
+	if state.Angle == 0 && !state.MirrorX && !state.MirrorY {
+		return source
+	}
+	size := source.Bounds().Size()
+	if state.Angle%2 != 0 {
+		size = image.Pt(size.Y, size.X)
+	}
+	out := image.NewRGBA(image.Rectangle{Max: size})
+	for y := 0; y < size.Y; y++ {
+		for x := 0; x < size.X; x++ {
+			u, v := x, y
+			if state.MirrorX {
+				u = size.X - 1 - u
+			}
+			if state.MirrorY {
+				v = size.Y - 1 - v
+			}
+			sx, sy := u, v
+			switch state.Angle {
+			case 1:
+				sx, sy = v, source.Rect.Dy()-1-u
+			case 2:
+				sx, sy = source.Rect.Dx()-1-u, source.Rect.Dy()-1-v
+			case 3:
+				sx, sy = source.Rect.Dx()-1-v, u
+			}
+			out.SetRGBA(x, y, source.RGBAAt(source.Rect.Min.X+sx, source.Rect.Min.Y+sy))
+		}
+	}
+	return out
 }
 
 func orderedRect(a, b image.Point) image.Rectangle {

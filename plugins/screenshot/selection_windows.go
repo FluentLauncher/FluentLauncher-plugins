@@ -4,7 +4,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"image"
 )
 
@@ -21,6 +20,8 @@ type selectionWindow struct {
 	dragMode           int // 0 idle, 1 new, 2 move, 4/8/16/32 resize edges
 	preferPin          bool
 	busy               bool
+	cursor             image.Point
+	toolbarHover       int
 }
 
 func (d *desktop) openSelection(img *image.RGBA, bounds image.Rectangle, preferPin bool, focus uintptr) error {
@@ -37,7 +38,7 @@ func (d *desktop) openSelection(img *image.RGBA, bounds image.Rectangle, preferP
 		b.close()
 		return err
 	}
-	s := &selectionWindow{d: d, image: img, background: b, dimmed: dimBitmap, desktopBounds: bounds, preferPin: preferPin, originalFocus: focus}
+	s := &selectionWindow{d: d, image: img, background: b, dimmed: dimBitmap, desktopBounds: bounds, preferPin: preferPin, originalFocus: focus, cursor: cursorPoint().Sub(bounds.Min), toolbarHover: -1}
 	s.hwnd = d.createWindow("FLScreenshotSelection", "截图：拖选区域，Enter 确认，P 贴图，Esc 取消", wsExTopmost|wsExToolwindow, d.controller, bounds)
 	if s.hwnd == 0 {
 		b.close()
@@ -68,7 +69,7 @@ func (s *selectionWindow) close() {
 
 func (s *selectionWindow) toolbar() image.Rectangle {
 	scale := max(1.0, float64(call(user32, "GetDpiForWindow", s.hwnd))/96)
-	w, h := int(380*scale), int(36*scale)
+	w, h := int(336*scale), int(40*scale)
 	w = min(w, s.image.Rect.Dx())
 	x := max(0, min(s.selected.Max.X-w, s.image.Rect.Dx()-w))
 	y := s.selected.Max.Y + 8
@@ -88,7 +89,11 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 	case 0x0014:
 		return 1 // WM_ERASEBKGND
 	case 0x0020:
-		call(user32, "SetCursor", call(user32, "LoadCursorW", 0, 32515))
+		cursor := 32515
+		if s.toolbarHover >= 0 {
+			cursor = 32512
+		}
+		call(user32, "SetCursor", call(user32, "LoadCursorW", 0, cursor))
 		return 1 // IDC_CROSS
 	case wmPaint:
 		s.paint()
@@ -111,14 +116,15 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 			return 0
 		}
 		p := mousePoint(lparam)
-		if !s.selected.Empty() && p.In(s.toolbar()) {
-			bar := s.toolbar()
-			index := min(3, (p.X-bar.Min.X)*4/bar.Dx())
+		if index := s.toolbarHit(p); index >= 0 {
 			if index == 3 {
 				s.close()
 			} else {
 				s.output([]string{"copy", "save", "pin"}[index])
 			}
+			return 0
+		}
+		if !s.selected.Empty() && p.In(s.toolbar()) {
 			return 0
 		}
 		s.anchor, s.dragStart = p, s.selected
@@ -129,12 +135,15 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		call(user32, "SetCapture", s.hwnd)
 		return 0
 	case wmMouseMove:
+		s.cursor = mousePoint(lparam)
+		s.toolbarHover = s.toolbarHit(s.cursor)
 		if s.dragMode != 0 && !s.busy {
-			s.drag(mousePoint(lparam))
-			invalidate(s.hwnd)
+			s.drag(s.cursor)
 		}
+		invalidate(s.hwnd)
 		return 0
 	case wmLButtonUp:
+		s.cursor = mousePoint(lparam)
 		if s.dragMode != 0 {
 			s.drag(mousePoint(lparam))
 			s.dragMode = 0
@@ -251,32 +260,25 @@ func (s *selectionWindow) paint() {
 	if !s.selected.Empty() {
 		s.background.draw(dc, s.selected, s.selected)
 		wr := winRect(s.selected.Inset(-1))
-		brush := call(gdi32, "CreateSolidBrush", systemColor(13))
+		brush := call(gdi32, "CreateSolidBrush", rgbRef(s.d.theme.Accent))
 		call(user32, "FrameRect", dc, ptr(&wr), brush)
 		call(gdi32, "DeleteObject", brush)
-		bar := s.toolbar()
-		fill(dc, bar, systemColor(15))
-		labels := []string{"复制 Enter", "保存 Ctrl+S", "贴图 P", "取消 Esc"}
-		if s.preferPin {
-			labels[0], labels[2] = "复制 Ctrl+C", "贴图 Enter"
-		}
-		for i, label := range labels {
-			button := image.Rect(bar.Min.X+i*bar.Dx()/4, bar.Min.Y, bar.Min.X+(i+1)*bar.Dx()/4, bar.Max.Y)
-			text(dc, label, button, systemColor(18))
-		}
-		label := fmt.Sprintf("%d × %d", s.selected.Dx(), s.selected.Dy())
-		r := image.Rect(s.selected.Min.X, max(0, s.selected.Min.Y-28), min(s.image.Rect.Dx(), s.selected.Min.X+150), max(0, s.selected.Min.Y-28)+24)
-		fill(dc, r, systemColor(15))
-		text(dc, label, r, systemColor(18))
+		s.paintSize(dc)
 	} else {
-		r := image.Rect(16, 16, min(s.image.Rect.Dx(), 650), 52)
-		fill(dc, r, systemColor(15))
-		text(dc, "拖选截图区域，拖动边缘调整大小 · Esc / 右键取消", r, systemColor(18))
+		r := image.Rect(16, 16, min(s.image.Rect.Dx()-16, 650), 52)
+		roundPanel(dc, r, px(int(s.d.theme.Radius), uiScale(s.hwnd)), s.d.theme.Background, s.d.theme.Border)
+		text(dc, "拖选截图区域，拖动边缘调整大小 · Esc / 右键取消", r, rgbRef(s.d.theme.Text))
+	}
+	if !s.busy && s.toolbarHover < 0 && (s.dragMode != 0 || s.selected.Empty() || s.hitTest(s.cursor) > 2) {
+		s.paintMagnifier(dc)
+	}
+	if !s.selected.Empty() && s.dragMode == 0 {
+		s.paintToolbar(dc)
 	}
 	if s.busy {
 		r := image.Rect(16, 60, min(s.image.Rect.Dx(), 400), 96)
-		fill(dc, r, systemColor(15))
-		text(dc, "正在处理图片…", r, systemColor(18))
+		roundPanel(dc, r, px(int(s.d.theme.Radius), uiScale(s.hwnd)), s.d.theme.Background, s.d.theme.Border)
+		text(dc, "正在处理图片…", r, rgbRef(s.d.theme.Text))
 	}
 }
 

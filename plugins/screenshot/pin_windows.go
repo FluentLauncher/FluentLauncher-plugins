@@ -15,11 +15,14 @@ type pinWindow struct {
 	hwnd, shadow         uintptr
 	state                pinState
 	image                *image.RGBA
+	rendered             *image.RGBA
 	bitmap, shadowBitmap *bitmap
 	dragging             bool
 	dragCursor           image.Point
 	dragBounds           image.Rectangle
 	busy                 bool
+	nativeTaskbar        bool
+	fileDrag             bool
 }
 
 func (d *desktop) openPin(img *image.RGBA, bounds image.Rectangle) (*pinWindow, error) {
@@ -27,8 +30,8 @@ func (d *desktop) openPin(img *image.RGBA, bounds image.Rectangle) (*pinWindow, 
 	if err != nil {
 		return nil, err
 	}
-	p := &pinWindow{d: d, image: img, bitmap: b, state: pinState{Original: bounds, Bounds: bounds, Shadow: d.preferences.NewPinShadow}}
-	p.hwnd = d.createWindow("FLScreenshotPin", "贴图：方向键微调，右键操作", wsExTopmost|wsExToolwindow, d.controller, bounds)
+	p := &pinWindow{d: d, image: img, rendered: img, bitmap: b, state: pinState{Original: bounds, Bounds: bounds, Shadow: d.preferences.NewPinShadow, Topmost: true, Opacity: 100}}
+	p.hwnd = d.createWindow("FLScreenshotPin", "贴图：方向键微调，右键操作", wsExTopmost|wsExToolwindow|wsExLayered, d.controller, bounds)
 	if p.hwnd == 0 {
 		b.close()
 		return nil, errors.New("无法创建贴图窗口")
@@ -51,6 +54,9 @@ func (p *pinWindow) close() {
 		return
 	}
 	delete(p.d.pins, p.hwnd)
+	if p.d.menuRoot != nil && p.d.menuRoot.owner == p.hwnd {
+		p.d.closeMenu()
+	}
 	p.d.pinOrder = slices.DeleteFunc(p.d.pinOrder, func(hwnd uintptr) bool { return hwnd == p.hwnd })
 	if p.dragging {
 		call(user32, "ReleaseCapture")
@@ -63,18 +69,33 @@ func (p *pinWindow) close() {
 }
 
 func (p *pinWindow) syncWindow() {
+	if p.nativeTaskbar != p.state.Taskbar {
+		call(user32, "ShowWindow", p.hwnd, 0)
+		exstyle := uintptr(wsExLayered)
+		owner := p.d.controller
+		if p.state.Taskbar {
+			exstyle |= 0x40000
+			owner = 0
+		} else {
+			exstyle |= wsExToolwindow
+		}
+		call(user32, "SetWindowLongPtrW", p.hwnd, coord(-20), exstyle)
+		call(user32, "SetWindowLongPtrW", p.hwnd, coord(-8), owner)
+		p.nativeTaskbar = p.state.Taskbar
+	}
+	call(user32, "SetLayeredWindowAttributes", p.hwnd, 0, max(10, min(100, p.state.Opacity))*255/100, 2)
 	if p.state.Hidden {
 		call(user32, "ShowWindow", p.shadow, 0)
 		call(user32, "ShowWindow", p.hwnd, 0)
 		return
 	}
-	windowAt(p.hwnd, p.state.Bounds, false)
+	windowAtLevel(p.hwnd, p.state.Bounds, false, p.state.Topmost)
 	p.syncShadow()
 	invalidate(p.hwnd)
 }
 
 func (p *pinWindow) syncShadow() {
-	if !p.state.Shadow {
+	if !p.state.Shadow || p.state.Hidden {
 		call(user32, "ShowWindow", p.shadow, 0)
 		return
 	}
@@ -83,7 +104,7 @@ func (p *pinWindow) syncShadow() {
 	if p.shadowBitmap == nil || p.shadowBitmap.width != bounds.Dx() || p.shadowBitmap.height != bounds.Dy() {
 		p.shadowBitmap.close()
 		img := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-		shadowColor := systemColor(16) // COLOR_BTNSHADOW follows system/high-contrast palette.
+		shadowColor := rgbRef(p.d.theme.Border)
 		for y := 0; y < img.Rect.Dy(); y++ {
 			for x := 0; x < img.Rect.Dx(); x++ {
 				// Transparent interior leaves the source pixels untouched. A small
@@ -110,9 +131,10 @@ func (p *pinWindow) syncShadow() {
 	old := call(gdi32, "SelectObject", mem, p.shadowBitmap.handle)
 	defer func() { call(gdi32, "SelectObject", mem, old); call(gdi32, "DeleteDC", mem) }()
 	dest, size, src := point{int32(bounds.Min.X), int32(bounds.Min.Y)}, point{int32(bounds.Dx()), int32(bounds.Dy())}, point{}
-	blend := [4]byte{0, 0, 255, 1}
+	blend := [4]byte{0, 0, uint8(max(10, min(100, p.state.Opacity)) * 255 / 100), 1}
 	call(user32, "UpdateLayeredWindow", p.shadow, dc, ptr(&dest), ptr(&size), mem, ptr(&src), 0, ptr(&blend), 2)
 	call(user32, "ShowWindow", p.shadow, 4) // SW_SHOWNOACTIVATE
+	windowAtLevel(p.shadow, bounds, false, p.state.Topmost)
 }
 
 func logShadowError(p *pinWindow, err error) {
@@ -133,7 +155,7 @@ func (p *pinWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 	case wmPaint:
 		var ps paintStruct
 		dc := call(user32, "BeginPaint", p.hwnd, ptr(&ps))
-		p.bitmap.draw(dc, image.Rect(0, 0, p.state.Bounds.Dx(), p.state.Bounds.Dy()), p.image.Bounds())
+		p.bitmap.draw(dc, image.Rect(0, 0, p.state.Bounds.Dx(), p.state.Bounds.Dy()), p.rendered.Bounds())
 		call(user32, "EndPaint", p.hwnd, ptr(&ps))
 		return 0
 	case wmLButtonDown:
@@ -143,18 +165,31 @@ func (p *pinWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		call(user32, "SetForegroundWindow", p.hwnd)
 		call(user32, "SetFocus", p.hwnd)
 		p.rememberFront()
+		if ctrlDown() {
+			p.fileDrag = true
+			p.dragCursor = cursorPoint()
+			call(user32, "SetCapture", p.hwnd)
+			return 0
+		}
 		if !p.state.Locked {
 			p.dragging, p.dragCursor, p.dragBounds = true, cursorPoint(), p.state.Bounds
 			call(user32, "SetCapture", p.hwnd)
 		}
 		return 0
 	case wmMouseMove:
+		if p.fileDrag && !p.busy && abs(cursorPoint().X-p.dragCursor.X)+abs(cursorPoint().Y-p.dragCursor.Y) > 8 {
+			p.fileDrag = false
+			call(user32, "ReleaseCapture")
+			p.exportFile(true)
+			return 0
+		}
 		if p.dragging && !p.state.Locked {
 			p.state.Bounds = p.dragBounds.Add(cursorPoint().Sub(p.dragCursor))
 			p.syncWindow()
 		}
 		return 0
 	case wmLButtonUp:
+		p.fileDrag = false
 		if p.dragging {
 			p.dragging = false
 			call(user32, "ReleaseCapture")
@@ -162,6 +197,7 @@ func (p *pinWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		return 0
 	case 0x0215:
 		p.dragging = false
+		p.fileDrag = false
 		return 0 // WM_CAPTURECHANGED
 	case wmMouseWheel:
 		if !p.busy {
@@ -215,22 +251,7 @@ func (p *pinWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 
 func (p *pinWindow) menu(pos image.Point) {
 	p.rememberFront()
-	menu := call(user32, "CreatePopupMenu")
-	defer call(user32, "DestroyMenu", menu)
-	appendMenu(menu, 1, "复制原图\tCtrl+C", false, true)
-	appendMenu(menu, 2, "另存为…\tCtrl+S", false, true)
-	call(user32, "AppendMenuW", menu, 0x800, 0, 0)
-	appendMenu(menu, 3, "显示阴影", p.state.Shadow, true)
-	appendMenu(menu, 4, "锁定位置", p.state.Locked, true)
-	appendMenu(menu, 5, "恢复原始大小", false, !p.state.Locked)
-	appendMenu(menu, 6, "回到原始位置", false, !p.state.Locked)
-	call(user32, "AppendMenuW", menu, 0x800, 0, 0)
-	appendMenu(menu, 7, "隐藏当前贴图", false, true)
-	appendMenu(menu, 8, "关闭当前贴图\tEsc", false, true)
-	call(user32, "SetForegroundWindow", p.hwnd)
-	chosen := call(user32, "TrackPopupMenu", menu, 0x100|0x02, coord(pos.X), coord(pos.Y), 0, p.hwnd, 0)
-	call(user32, "PostMessageW", p.hwnd, 0, 0, 0)
-	p.applyMenu(chosen)
+	p.d.showMenu(p.hwnd, pos, p.menuItems(), func(id int) { p.applyMenu(uintptr(id)) })
 }
 
 func (p *pinWindow) rememberFront() {
@@ -250,7 +271,7 @@ func (p *pinWindow) applyMenu(chosen uintptr) {
 		p.state.Locked = !p.state.Locked
 	case 5:
 		if !p.state.Locked {
-			p.state.Bounds.Max = p.state.Bounds.Min.Add(p.state.Original.Size())
+			p.state.Bounds.Max = p.state.Bounds.Min.Add(p.state.naturalSize())
 		}
 	case 6:
 		if !p.state.Locked {
@@ -261,8 +282,67 @@ func (p *pinWindow) applyMenu(chosen uintptr) {
 	case 8:
 		p.close()
 		return
-	default:
+	case 9:
+		p.state.Topmost = !p.state.Topmost
+	case 10:
+		p.state.Taskbar = !p.state.Taskbar
+	case 11:
+		p.transform(func(next *pinState) {
+			next.Angle = 0
+			next.MirrorX = false
+			next.MirrorY = false
+			next.Bounds = next.Original
+			next.Opacity = 100
+			next.Locked = false
+		})
 		return
+	case 12:
+		p.exportFile(false)
+		return
+	case 13:
+		p.help(posForHelp(p))
+		return
+	case 31, 32, 33:
+		if !p.state.Locked {
+			p.transform(func(next *pinState) {
+				delta := 1
+				if chosen == 32 {
+					delta = 3
+				}
+				if chosen == 33 {
+					delta = 2
+				}
+				next.Angle = (next.Angle + delta) % 4
+				if delta%2 != 0 {
+					size := next.Bounds.Size()
+					next.Bounds.Max = next.Bounds.Min.Add(image.Pt(size.Y, size.X))
+				}
+			})
+		}
+		return
+	case 41, 42:
+		if !p.state.Locked {
+			p.transform(func(next *pinState) {
+				if chosen == 41 {
+					next.MirrorX = !next.MirrorX
+				} else {
+					next.MirrorY = !next.MirrorY
+				}
+			})
+		}
+		return
+	default:
+		if chosen >= 110 && chosen <= 200 {
+			p.state.Opacity = int(chosen) - 100
+		} else if chosen >= 225 && chosen <= 400 {
+			if !p.state.Locked {
+				percent := int(chosen) - 200
+				size := p.state.naturalSize()
+				p.state.Bounds.Max = p.state.Bounds.Min.Add(image.Pt(max(1, size.X*percent/100), max(1, size.Y*percent/100)))
+			}
+		} else {
+			return
+		}
 	}
 	if p.d.pins[p.hwnd] == p {
 		p.syncWindow()
@@ -271,7 +351,7 @@ func (p *pinWindow) applyMenu(chosen uintptr) {
 
 func (p *pinWindow) copy() {
 	p.busy = true
-	p.d.outputImage(p.image, p.state.Original, false, func(err error) {
+	p.d.outputImage(p.rendered, p.state.Original, false, func(err error) {
 		p.busy = false
 		if p.d.pins[p.hwnd] == p {
 			p.d.report(p.hwnd, err)
@@ -280,7 +360,7 @@ func (p *pinWindow) copy() {
 }
 func (p *pinWindow) save() {
 	p.busy = true
-	p.d.saveAs(p.hwnd, p.image, func(err error, _ bool) {
+	p.d.saveAs(p.hwnd, p.rendered, func(err error, _ bool) {
 		p.busy = false
 		if p.d.pins[p.hwnd] == p {
 			p.d.report(p.hwnd, err)

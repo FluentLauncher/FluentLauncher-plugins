@@ -87,3 +87,11 @@ SDK 可选实现 `ActivityHandler.HasActivity(context.Context) (bool, error)`，
 选区、倒计时、贴图窗口（包括隐藏的贴图）等仍存在时返回 true，宿主延后一个空闲周期再检查；无活动返回 false 后回收。不声明此能力的旧插件沿用原行为。检查失败或超时不会无限保活；禁用、卸载、升级、主动停止和宿主退出仍终止进程，且活动插件仍占用现有进程预算。无需主动发送通知，也不改变协议版本 1。
 
 对于采用异步任务的插件，`execute` / `executeCommand` 仅表示任务已接受，不能等待整个交互；异步失败需要由插件自己的界面给出反馈。截图插件的当前版本需要同步更新宿主才能保证长期贴图存活。
+
+## 宿主主题同步
+
+SDK 可选实现 `ThemeHandler.SetTheme(context.Context, Theme) error`，initialize 自动声明 `theme`。宿主在握手后、首次动作前发送 `setTheme`，配色变化（包括系统模式变化）时更新现有进程；插件仅将其排入 GUI 消息队列，不等待绘制。无此能力的旧插件不接收新方法。
+
+`Theme` 传递解析后的 `dark`、`background`、`surface`、`surfaceHover`、`border`、`text`、`textMuted`、`accent`、`accentText`、`danger`、`inverse`、`inverseText`、`radius` 与 `spacing`。颜色为不透明 sRGB 整数 `0xRRGGBB`，JSON 使用十进制数；宿主将透明表面合成到背景色。工具字号由插件保留，搜索面板字号不传入。
+
+主题变更不会启动休眠插件，也不刷新空闲时间。宿主正常停止时先关闭 stdin，给插件最多 400ms 处理 EOF 清理，然后仍通过 Job Object 回收；协议超时与异常停止继续立即结束进程。

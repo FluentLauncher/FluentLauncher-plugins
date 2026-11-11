@@ -13,6 +13,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk"
 	"golang.org/x/sys/windows"
 )
 
@@ -26,6 +27,10 @@ type desktop struct {
 	pinOrder    []uintptr // back to front, preserved while hidden or excluded from capture
 	selection   *selectionWindow
 	preferences preferences
+	theme       pluginsdk.Theme
+	popups      map[uintptr]*popupWindow
+	menuRoot    *popupWindow
+	tempDir     string
 }
 
 // Accessed only on the locked GUI thread, including synchronous Win32 callbacks.
@@ -33,11 +38,11 @@ var gui *desktop
 
 func newDesktop() (*desktop, error) {
 	call(user32, "SetProcessDpiAwarenessContext", ^uintptr(3)) // PER_MONITOR_AWARE_V2 (-4)
-	call(ole32, "CoInitializeEx", 0, 2)
-	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences()}
+	call(ole32, "OleInitialize", 0)
+	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
@@ -52,8 +57,13 @@ func newDesktop() (*desktop, error) {
 }
 
 func (d *desktop) createWindow(class, title string, exstyle, owner uintptr, bounds image.Rectangle) uintptr {
-	return call(user32, "CreateWindowExW", exstyle, ptr(u16(class)), ptr(u16(title)), wsPopup,
+	hwnd := call(user32, "CreateWindowExW", exstyle, ptr(u16(class)), ptr(u16(title)), wsPopup,
 		coord(bounds.Min.X), coord(bounds.Min.Y), bounds.Dx(), bounds.Dy(), owner, 0, call(kernel32, "GetModuleHandleW", 0), 0)
+	if hwnd != 0 {
+		disabled := uint32(1)
+		call(dwmapi, "DwmSetWindowAttribute", hwnd, 3, ptr(&disabled), 4)
+	}
+	return hwnd
 }
 
 func (d *desktop) post(fn func()) error {
@@ -76,7 +86,7 @@ func (d *desktop) post(fn func()) error {
 }
 
 func (d *desktop) run() {
-	defer call(ole32, "CoUninitialize")
+	defer call(ole32, "OleUninitialize")
 	var msg message
 	for {
 		r := int32(call(user32, "GetMessageW", ptr(&msg), 0, 0, 0))
@@ -106,6 +116,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	if s := d.selection; s != nil && hwnd == s.hwnd {
 		return s.handle(msg, wparam, lparam)
 	}
+	if p := d.popups[hwnd]; p != nil {
+		return p.handle(msg, wparam, lparam)
+	}
 	if p := d.pins[hwnd]; p != nil {
 		return p.handle(msg, wparam, lparam)
 	}
@@ -122,8 +135,14 @@ func (d *desktop) shutdown() {
 	if d.selection != nil {
 		d.selection.close()
 	}
+	d.closeMenu()
 	for _, p := range d.pins {
 		p.close()
+	}
+	if d.tempDir != "" {
+		if err := os.RemoveAll(d.tempDir); err != nil {
+			log.Print("cleanup screenshot exports: ", err)
+		}
 	}
 	call(user32, "DestroyWindow", d.controller)
 	call(user32, "PostQuitMessage", 0)
@@ -171,6 +190,7 @@ func (d *desktop) startCapture(id string) {
 		d.capturing.Store(false)
 		return
 	}
+	d.closeMenu()
 	originalFocus := call(user32, "GetForegroundWindow")
 	bounds := virtualBounds()
 	if id == "screen" {
@@ -260,38 +280,19 @@ func (d *desktop) saveAs(owner uintptr, img *image.RGBA, complete func(error, bo
 }
 
 func (d *desktop) settingsMenu() {
-	d.active.Add(1)
-	defer d.active.Add(-1)
-	menu := call(user32, "CreatePopupMenu")
-	defer call(user32, "DestroyMenu", menu)
-	appendMenu(menu, 1, "再次截图时包含贴图", d.preferences.IncludePins, true)
-	appendMenu(menu, 2, "新贴图显示阴影", d.preferences.NewPinShadow, true)
-	pos := cursorPoint()
-	call(user32, "SetForegroundWindow", d.controller)
-	chosen := call(user32, "TrackPopupMenu", menu, 0x100|0x02, coord(pos.X), coord(pos.Y), 0, d.controller, 0)
-	call(user32, "PostMessageW", d.controller, 0, 0, 0)
-	previous := d.preferences
-	switch chosen {
-	case 1:
-		d.preferences.IncludePins = !d.preferences.IncludePins
-	case 2:
-		d.preferences.NewPinShadow = !d.preferences.NewPinShadow
-	default:
-		return
-	}
-	if err := savePreferences(d.preferences); err != nil {
-		d.preferences = previous
-		d.report(d.controller, err)
-	}
-}
-
-func appendMenu(menu, id uintptr, title string, checked, enabled bool) {
-	flags := uintptr(0)
-	if checked {
-		flags |= 0x8
-	}
-	if !enabled {
-		flags |= 0x1
-	}
-	call(user32, "AppendMenuW", menu, flags, id, ptr(u16(title)))
+	d.showMenu(d.controller, cursorPoint(), []menuItem{
+		{ID: 1, Label: "再次截图时包含贴图", Checked: d.preferences.IncludePins},
+		{ID: 2, Label: "新贴图显示阴影", Checked: d.preferences.NewPinShadow},
+	}, func(id int) {
+		previous := d.preferences
+		if id == 1 {
+			d.preferences.IncludePins = !d.preferences.IncludePins
+		} else {
+			d.preferences.NewPinShadow = !d.preferences.NewPinShadow
+		}
+		if err := savePreferences(d.preferences); err != nil {
+			d.preferences = previous
+			d.report(d.controller, err)
+		}
+	})
 }

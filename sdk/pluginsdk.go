@@ -327,7 +327,20 @@ func (s *server) handle(ctx context.Context, req request) (any, error) {
 		if _, ok := s.handler.(ActivityHandler); ok {
 			result.Capabilities = append(result.Capabilities, "activity")
 		}
+		if _, ok := s.handler.(ThemeHandler); ok {
+			result.Capabilities = append(result.Capabilities, "theme")
+		}
 		return result, nil
+	case "setTheme":
+		handler, ok := s.handler.(ThemeHandler)
+		if !ok {
+			return nil, errors.New("插件未实现 theme")
+		}
+		var theme Theme
+		if err := json.Unmarshal(req.Params, &theme); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, handler.SetTheme(ctx, theme)
 	case "activity":
 		handler, ok := s.handler.(ActivityHandler)
 		if !ok {

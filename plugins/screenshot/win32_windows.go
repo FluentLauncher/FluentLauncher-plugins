@@ -24,6 +24,9 @@ var (
 
 // Keep pointer arguments visible to the GC until the native call returns.
 func call(dll *windows.LazyDLL, name string, args ...any) uintptr {
+	return callAddress(dll.NewProc(name).Addr(), args...)
+}
+func callAddress(address uintptr, args ...any) uintptr {
 	native := make([]uintptr, len(args))
 	for i, arg := range args {
 		switch v := arg.(type) {
@@ -39,7 +42,7 @@ func call(dll *windows.LazyDLL, name string, args ...any) uintptr {
 			panic(fmt.Sprintf("unsupported Win32 argument %T", arg))
 		}
 	}
-	r, _, _ := syscall.SyscallN(dll.NewProc(name).Addr(), native...)
+	r, _, _ := syscall.SyscallN(address, native...)
 	runtime.KeepAlive(args)
 	return r
 }
@@ -165,11 +168,18 @@ func currentMonitor(p image.Point) image.Rectangle {
 	return info.Monitor.image()
 }
 func windowAt(hwnd uintptr, bounds image.Rectangle, activate bool) {
+	windowAtLevel(hwnd, bounds, activate, true)
+}
+func windowAtLevel(hwnd uintptr, bounds image.Rectangle, activate, topmost bool) {
 	flags := uintptr(swpShowwindow | swpNoactivate)
 	if activate {
 		flags &^= swpNoactivate
 	}
-	call(user32, "SetWindowPos", hwnd, hwndTopmost, coord(bounds.Min.X), coord(bounds.Min.Y), uintptr(bounds.Dx()), uintptr(bounds.Dy()), flags)
+	level := hwndTopmost
+	if !topmost {
+		level = ^uintptr(1)
+	} // HWND_NOTOPMOST
+	call(user32, "SetWindowPos", hwnd, level, coord(bounds.Min.X), coord(bounds.Min.Y), uintptr(bounds.Dx()), uintptr(bounds.Dy()), flags)
 }
 func invalidate(hwnd uintptr)           { call(user32, "InvalidateRect", hwnd, 0, 0) }
 func systemColor(index uintptr) uintptr { return call(user32, "GetSysColor", index) }
@@ -184,10 +194,25 @@ func fill(dc uintptr, r image.Rectangle, color uintptr) {
 	call(user32, "FillRect", dc, ptr(&wr), brush)
 }
 func text(dc uintptr, value string, r image.Rectangle, color uintptr) {
+	drawText(dc, value, r, color, 1)
+}
+
+func textAligned(dc uintptr, value string, r image.Rectangle, color uintptr, right bool) {
+	flags := uintptr(0)
+	if right {
+		flags = 2
+	}
+	drawText(dc, value, r, color, flags)
+}
+
+func drawText(dc uintptr, value string, r image.Rectangle, color uintptr, alignment uintptr) {
 	call(gdi32, "SetBkMode", dc, 1)
 	call(gdi32, "SetTextColor", dc, color)
 	font := uintptr(0)
 	dpi := call(user32, "GetDpiForWindow", call(user32, "WindowFromDC", dc))
+	if dpi == 0 {
+		dpi = call(user32, "GetDpiForSystem")
+	}
 	metrics := nonclientMetrics{Size: uint32(unsafe.Sizeof(nonclientMetrics{}))}
 	if call(user32, "SystemParametersInfoForDpi", 0x29, metrics.Size, ptr(&metrics), 0, max(dpi, 96)) != 0 {
 		font = call(gdi32, "CreateFontIndirectW", ptr(&metrics.MessageFont))
@@ -205,12 +230,13 @@ func text(dc uintptr, value string, r image.Rectangle, color uintptr) {
 		}
 	}()
 	wr := winRect(r)
-	call(user32, "DrawTextW", dc, ptr(u16(value)), ^uintptr(0), ptr(&wr), 0x20|0x04|0x01|0x8000) // single line, centered, ellipsis
+	call(user32, "DrawTextW", dc, ptr(u16(value)), ^uintptr(0), ptr(&wr), 0x20|0x04|alignment|0x8000)
 }
 
 type bitmap struct {
 	handle        uintptr
 	width, height int
+	address       uintptr
 }
 
 func newBitmap(img *image.RGBA) (*bitmap, error) {
@@ -232,7 +258,19 @@ func newBitmap(img *image.RGBA) (*bitmap, error) {
 		call(gdi32, "DeleteObject", h)
 		return nil, err
 	}
-	return &bitmap{h, img.Rect.Dx(), img.Rect.Dy()}, nil
+	return &bitmap{handle: h, width: img.Rect.Dx(), height: img.Rect.Dy(), address: address}, nil
+}
+
+func (b *bitmap) pixels() (*image.RGBA, error) {
+	call(gdi32, "GdiFlush")
+	img := image.NewRGBA(image.Rect(0, 0, b.width, b.height))
+	if err := windows.ReadProcessMemory(windows.CurrentProcess(), b.address, &img.Pix[0], uintptr(len(img.Pix)), nil); err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+2], img.Pix[i+3] = img.Pix[i+2], img.Pix[i], 255
+	}
+	return img, nil
 }
 func (b *bitmap) close() {
 	if b != nil && b.handle != 0 {
@@ -241,10 +279,14 @@ func (b *bitmap) close() {
 	}
 }
 func (b *bitmap) draw(dc uintptr, dest, src image.Rectangle) {
+	b.drawMode(dc, dest, src, 4)
+}
+
+func (b *bitmap) drawMode(dc uintptr, dest, src image.Rectangle, mode int) {
 	mem := call(gdi32, "CreateCompatibleDC", dc)
 	old := call(gdi32, "SelectObject", mem, b.handle)
 	defer func() { call(gdi32, "SelectObject", mem, old); call(gdi32, "DeleteDC", mem) }()
-	call(gdi32, "SetStretchBltMode", dc, 4) // HALFTONE
+	call(gdi32, "SetStretchBltMode", dc, mode)
 	call(gdi32, "SetBrushOrgEx", dc, 0, 0, 0)
 	call(gdi32, "StretchBlt", dc, coord(dest.Min.X), coord(dest.Min.Y), uintptr(dest.Dx()), uintptr(dest.Dy()), mem,
 		coord(src.Min.X), coord(src.Min.Y), uintptr(src.Dx()), uintptr(src.Dy()), srccopy)

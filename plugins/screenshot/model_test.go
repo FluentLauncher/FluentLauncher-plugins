@@ -54,3 +54,31 @@ func TestPinZoomPreservesOriginAndAspect(t *testing.T) {
 		t.Fatal("reverse drag")
 	}
 }
+
+func TestRotationAndMirrorsUseSourcePixels(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 3; x++ {
+			src.SetRGBA(x, y, color.RGBA{R: uint8(y*3 + x + 1), A: 255})
+		}
+	}
+	rot := transformed(src, pinState{Angle: 1})
+	if rot.Bounds() != image.Rect(0, 0, 2, 3) || rot.RGBAAt(0, 0).R != 4 || rot.RGBAAt(1, 2).R != 3 {
+		t.Fatal("clockwise rotation", rot)
+	}
+	left := transformed(src, pinState{Angle: 3})
+	if left.RGBAAt(0, 0).R != 3 || left.RGBAAt(1, 2).R != 4 {
+		t.Fatal("counterclockwise rotation")
+	}
+	mirror := transformed(src, pinState{MirrorX: true})
+	if mirror.RGBAAt(0, 0).R != 3 || mirror.RGBAAt(2, 1).R != 4 {
+		t.Fatal("horizontal mirror")
+	}
+	vertical := transformed(src, pinState{MirrorY: true})
+	if vertical.RGBAAt(0, 0).R != 4 {
+		t.Fatal("vertical mirror")
+	}
+	if src.RGBAAt(0, 0).R != 1 {
+		t.Fatal("source was mutated")
+	}
+}

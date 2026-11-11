@@ -1,12 +1,12 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": ["截图", "screenshot", "snap", "截屏"],
   "permissions": [],
-  "description": "区域与全屏截图、原地置顶贴图、键盘微调；仅主动触发时捕获，不上传，贴图仅内存。需要支持 activity 能力的新版宿主以保留贴图。",
+  "description": "主题工具条与菜单、像素放大镜、区域与全屏截图、原地贴图与旋转镜像。仅主动捕获，不上传、不留历史；文件打开或拖出时生成临时 PNG。需支持 activity / theme 的新版宿主。",
   "commands": [
     {"id": "region", "title": "区域截图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+A"]},
     {"id": "region-pin", "title": "区域截图并原地贴图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+P"]},

@@ -111,7 +111,7 @@ func TestNativePinCompositeAndKeyboard(t *testing.T) {
 	}
 	defer func() {
 		d.shutdown()
-		call(ole32, "CoUninitialize")
+		call(ole32, "OleUninitialize")
 		if previous != 0 {
 			call(user32, "SetForegroundWindow", previous)
 		}
@@ -154,12 +154,22 @@ func TestNativePinCompositeAndKeyboard(t *testing.T) {
 		call(dwmapi, "DwmFlush")
 	}
 	pump()
-	before, err := captureScreen(p.state.Bounds)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before.Pix, img.Pix) {
-		t.Fatal("original-position pin did not cover source pixels exactly")
+	// Layered-window presentation is asynchronous even after GDI UpdateWindow.
+	// Wait for the actual presented pixels, rather than racing the first frame.
+	deadline := time.Now().Add(time.Second)
+	for {
+		before, err := captureScreen(p.state.Bounds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(before.Pix, img.Pix) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("original-position pin did not cover source pixels exactly")
+		}
+		pump()
+		time.Sleep(16 * time.Millisecond)
 	}
 	call(user32, "SendMessageW", p.hwnd, wmKeyDown, 0x27, 0)
 	if p.state.Bounds != bounds.Add(image.Pt(1, 0)) {
@@ -223,6 +233,7 @@ func TestNativePinCompositeAndKeyboard(t *testing.T) {
 	if s.selected != image.Rect(30, 40, 130, 100) {
 		t.Fatal("native selection geometry", s.selected)
 	}
+	exerciseThemedUI(t, d, p, s)
 	call(user32, "UpdateWindow", s.hwnd)
 	call(dwmapi, "DwmFlush")
 	if dir := os.Getenv("FL_SCREENSHOT_ARTIFACT_DIR"); dir != "" {

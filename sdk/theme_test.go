@@ -36,11 +36,13 @@ func TestOptionalThemeHandler(t *testing.T) {
 	opacity := float32(0.42)
 	theme.Opacity = &opacity
 	theme.Backdrop = "acrylic"
+	end := uint32(0)
+	theme.GradientEnd = &end
 	data, _ = json.Marshal(theme)
 	if _, err := s.handle(context.Background(), request{Method: "setTheme", Params: data}); err != nil || !reflect.DeepEqual(h.theme, theme) {
 		t.Fatal("surface appearance round trip", h.theme, err)
 	}
-	if _, err := s.handle(context.Background(), request{Method: "setTheme", Params: json.RawMessage(`{"background":1193046}`)}); err != nil || h.theme.Opacity != nil || h.theme.Backdrop != "" {
+	if _, err := s.handle(context.Background(), request{Method: "setTheme", Params: json.RawMessage(`{"background":1193046}`)}); err != nil || h.theme.Opacity != nil || h.theme.Backdrop != "" || h.theme.GradientEnd != nil {
 		t.Fatal("old host compatibility", h.theme, err)
 	}
 }

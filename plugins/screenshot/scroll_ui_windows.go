@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"image"
+	"image/color"
+	"log"
 )
 
 func (s *scrollWindow) showPreview() {
@@ -135,7 +137,45 @@ func (s *scrollWindow) dragScrollbar(point image.Point) {
 }
 
 func (s *scrollWindow) paint() {
-	s.paintBuffer.paint(s.hwnd, s.bounds.Size(), s.draw)
+	var ps paintStruct
+	call(user32, "BeginPaint", s.hwnd, ptr(&ps))
+	call(user32, "EndPaint", s.hwnd, ptr(&ps))
+	err := s.paintBuffer.render(s.hwnd, s.bounds.Size(), s.draw)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	img, err := s.layeredImage()
+	if err == nil {
+		err = presentLayered(s.hwnd, s.bounds, img)
+	}
+	if err != nil {
+		log.Print(err)
+	}
+}
+
+func (s *scrollWindow) layeredImage() (*image.RGBA, error) {
+	img, err := s.paintBuffer.pixels()
+	if err != nil {
+		return nil, err
+	}
+	bar := s.toolbar()
+	surfaceAlpha(img, s.d.theme, bar, px(int(s.d.theme.Radius), uiScale(s.hwnd)), materialAlpha(s.d.theme, s.material), s.opaqueButtons)
+	frame := s.imageFrame()
+	scroll := image.Rectangle{}
+	if s.preview && s.result != nil && s.visibleRows() < s.result.Rect.Dy() {
+		scroll, _ = s.scrollbar()
+		scroll = scroll.Inset(-px(2, uiScale(s.hwnd)))
+	}
+	for y := 0; y < img.Rect.Dy(); y++ {
+		for x := 0; x < img.Rect.Dx(); x++ {
+			p := image.Pt(x, y)
+			if !p.In(bar) && !p.In(frame) && !p.In(scroll) {
+				img.SetRGBA(x, y, color.RGBA{})
+			}
+		}
+	}
+	return img, nil
 }
 
 func (s *scrollWindow) draw(dc uintptr) {
@@ -143,7 +183,8 @@ func (s *scrollWindow) draw(dc uintptr) {
 	r := image.Rect(0, 0, s.bounds.Dx(), s.bounds.Dy())
 	fill(dc, r, rgbRef(t.Background))
 	bar := s.toolbar()
-	roundPanel(dc, bar, px(int(t.Radius), scale), t.Background, t.Border)
+	surfacePanel(dc, bar, px(int(t.Radius), scale), t)
+	s.opaqueButtons = nil
 	labels := []string{"暂停", "完成", "取消"}
 	icons := []string{"pause", "check", "close"}
 	if s.paused.Load() {
@@ -177,7 +218,10 @@ func (s *scrollWindow) draw(dc uintptr) {
 		if action == 2 && !s.preview && i == s.hover {
 			fg = t.Danger
 		}
-		roundPanel(dc, r, px(4, scale), bg, bg)
+		if disabled || i == s.hover || action == primary {
+			roundPanel(dc, r, px(4, scale), bg, bg)
+			s.opaqueButtons = append(s.opaqueButtons, opaqueSurface{r, px(4, scale)})
+		}
 		size := px(18, scale)
 		x := (r.Min.X + r.Max.X - size) / 2
 		if !s.preview {

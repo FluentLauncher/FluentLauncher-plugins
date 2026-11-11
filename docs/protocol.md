@@ -94,6 +94,8 @@ SDK 可选实现 `ThemeHandler.SetTheme(context.Context, Theme) error`，initial
 
 可选表面字段 `opacity`（0～1，仅背景）和 `backdrop`（`none` / `acrylic` / `mica`）随同 `setTheme` 发送；缺省不透明、无材质，保持旧宿主兼容。文字和图标不随背景不透明度改变。高对比度传入不透明无材质；Mica 的不透明度固定为 1，由系统管理背景。字段为向后兼容扩展，协议版本仍为 1；插件必须在系统材质不可用时回退主题底色。
 
+`gradientEnd` 为可选的不透明 sRGB 结束色，编码同 `background`。存在时从 `background` 向结束色自上而下渐变（180°，与宿主一致），两端共用 `opacity`，颜色自身 alpha 不生效；`0` 是有效黑色，省略才表示纯色。宿主仅在渐变模式发送该字段，切换其他模式或高对比度时省略。旧插件忽略它，旧宿主不发送它，新插件回退为主色。
+
 `Theme` 传递解析后的 `dark`、`background`、`surface`、`surfaceHover`、`border`、`text`、`textMuted`、`accent`、`accentText`、`danger`、`inverse`、`inverseText`、`radius` 与 `spacing`。颜色为不透明 sRGB 整数 `0xRRGGBB`，JSON 使用十进制数；宿主将透明表面合成到背景色。工具字号由插件保留，搜索面板字号不传入。
 
 主题变更不会启动休眠插件，也不刷新空闲时间。宿主正常停止时先关闭 stdin，给插件最多 400ms 处理 EOF 清理，然后仍通过 Job Object 回收；协议超时与异常停止继续立即结束进程。

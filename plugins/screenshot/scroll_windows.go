@@ -20,6 +20,8 @@ type scrollWindow struct {
 	d                                *desktop
 	hwnd                             uintptr
 	outline                          uintptr
+	material                         string
+	opaqueButtons                    []opaqueSurface
 	region, bounds                   image.Rectangle
 	ctx                              context.Context
 	cancel                           context.CancelFunc
@@ -74,7 +76,7 @@ func (d *desktop) openLongCapture(region image.Rectangle, scale float64, seeds .
 	size := image.Pt(min(px(280, scale), monitor.Dx()), min(px(420, scale), monitor.Dy()))
 	bounds := longPanelBounds(region, monitor, size, px(10, scale))
 	s := &scrollWindow{d: d, region: region, bounds: bounds, hover: -1, status: "滚动页面，内容会自动拼接"}
-	s.hwnd = d.createWindow("FLScreenshotLong", "长截图预览", wsExTopmost|wsExToolwindow, d.controller, bounds)
+	s.hwnd = d.createWindow("FLScreenshotLong", "长截图预览", wsExTopmost|wsExToolwindow|wsExLayered, d.controller, bounds)
 	if s.hwnd == 0 {
 		d.report(d.controller, errors.New("无法创建长截图预览"))
 		return
@@ -87,6 +89,7 @@ func (d *desktop) openLongCapture(region image.Rectangle, scale float64, seeds .
 		return
 	}
 	d.scrolling = s
+	s.material = applySurfaceMaterial(s.hwnd, d.theme)
 	if !s.openSourceFrame() {
 		d.scrolling = nil
 		call(user32, "DestroyWindow", s.hwnd)

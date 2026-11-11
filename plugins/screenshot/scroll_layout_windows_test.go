@@ -20,18 +20,7 @@ func previewSurface(t *testing.T, s *scrollWindow) *image.RGBA {
 	t.Helper()
 	invalidate(s.hwnd)
 	call(user32, "UpdateWindow", s.hwnd)
-	b, err := newBitmap(image.NewRGBA(image.Rectangle{Max: s.bounds.Size()}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.close()
-	dc := call(gdi32, "CreateCompatibleDC", 0)
-	old := call(gdi32, "SelectObject", dc, b.handle)
-	defer func() { call(gdi32, "SelectObject", dc, old); call(gdi32, "DeleteDC", dc) }()
-	if call(gdi32, "BitBlt", dc, 0, 0, b.width, b.height, s.paintBuffer.dc, 0, 0, srccopy) == 0 {
-		t.Fatal("preview buffer not presented")
-	}
-	img, err := b.pixels()
+	img, err := s.layeredImage()
 	if err != nil {
 		t.Fatal(err)
 	}

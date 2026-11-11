@@ -21,8 +21,9 @@ type Theme struct {
 	Radius       float32 `json:"radius"`
 	Spacing      float32 `json:"spacing"`
 	// Opacity affects background only. Nil is opaque for older hosts.
-	Opacity  *float32 `json:"opacity,omitempty"`
-	Backdrop string   `json:"backdrop,omitempty"` // none, acrylic, mica
+	Opacity     *float32 `json:"opacity,omitempty"`
+	Backdrop    string   `json:"backdrop,omitempty"`    // none, acrylic, mica
+	GradientEnd *uint32  `json:"gradientEnd,omitempty"` // optional vertical end color; nil uses a solid plate
 }
 
 // ThemeHandler is optional. Return after queuing the palette on the GUI thread.

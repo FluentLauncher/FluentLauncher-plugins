@@ -246,7 +246,7 @@ func (p *popupWindow) draw(dc uintptr) {
 	t := p.d.theme
 	r := image.Rect(0, 0, p.bounds.Dx(), p.bounds.Dy())
 	fill(dc, r, rgbRef(t.Background))
-	roundPanel(dc, r, px(int(max(0, t.Radius)), p.scale), t.Background, t.Border)
+	surfacePanel(dc, r, px(int(max(0, t.Radius)), p.scale), t)
 	for i, it := range p.items {
 		r := p.rows[i]
 		if it.Label == "" {

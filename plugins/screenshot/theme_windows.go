@@ -27,6 +27,7 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 	d.theme = theme
 	if d.scrolling != nil && d.scrolling.capturePinsHidden {
 		d.scrolling.themeDeferred = true
+		d.scrolling.material = applySurfaceMaterial(d.scrolling.hwnd, theme)
 		d.scrolling.updatePreviewRegion()
 		invalidate(d.scrolling.outline)
 		return
@@ -37,6 +38,7 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 		invalidate(d.selection.hwnd)
 	}
 	if d.scrolling != nil {
+		d.scrolling.material = applySurfaceMaterial(d.scrolling.hwnd, theme)
 		d.scrolling.updatePreviewRegion()
 		invalidate(d.scrolling.outline)
 	}

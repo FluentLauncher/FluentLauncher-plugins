@@ -22,20 +22,24 @@ func surfaceOpacity(t pluginsdk.Theme) float64 {
 // composed independently; SetLayeredWindowAttributes would fade them too.
 func (p *popupWindow) applyMaterial() {
 	t := p.d.theme
-	dark := uint32(0)
-	if t.Dark {
-		dark = 1
-	}
-	call(dwmapi, "DwmSetWindowAttribute", p.hwnd, 20, ptr(&dark), 4)
-	backdrop := uint32(1) // DWMSBT_NONE
-	call(dwmapi, "DwmSetWindowAttribute", p.hwnd, 38, ptr(&backdrop), 4)
-	clearMargins := [4]int32{}
-	call(dwmapi, "DwmExtendFrameIntoClientArea", p.hwnd, ptr(&clearMargins))
+	p.material = applySurfaceMaterial(p.hwnd, t)
 	radius := px(int(max(0, t.Radius)), p.scale)
 	region := call(gdi32, "CreateRoundRectRgn", 0, 0, p.bounds.Dx()+1, p.bounds.Dy()+1, radius*2, radius*2)
 	if call(user32, "SetWindowRgn", p.hwnd, region, 0) == 0 {
 		call(gdi32, "DeleteObject", region)
 	}
+}
+
+func applySurfaceMaterial(hwnd uintptr, t pluginsdk.Theme) string {
+	dark := uint32(0)
+	if t.Dark {
+		dark = 1
+	}
+	call(dwmapi, "DwmSetWindowAttribute", hwnd, 20, ptr(&dark), 4)
+	backdrop := uint32(1) // DWMSBT_NONE
+	call(dwmapi, "DwmSetWindowAttribute", hwnd, 38, ptr(&backdrop), 4)
+	clearMargins := [4]int32{}
+	call(dwmapi, "DwmExtendFrameIntoClientArea", hwnd, ptr(&clearMargins))
 	policy := struct{ State, Flags, Gradient, Animation uint32 }{}
 	attribute := struct {
 		Attribute int32
@@ -45,26 +49,27 @@ func (p *popupWindow) applyMaterial() {
 	proc := user32.NewProc("SetWindowCompositionAttribute")
 	available := proc.Find() == nil
 	if available {
-		callAddress(proc.Addr(), p.hwnd, ptr(&attribute))
+		callAddress(proc.Addr(), hwnd, ptr(&attribute))
 	}
-	p.material = "none"
+	material := "none"
 	if t.Backdrop == "acrylic" && available {
 		policy.State = 4 // ACCENT_ENABLE_ACRYLICBLURBEHIND
 		policy.Gradient = uint32(max(1, int(surfaceOpacity(t)*255)))<<24 | uint32(rgbRef(t.Background))
-		if callAddress(proc.Addr(), p.hwnd, ptr(&attribute)) != 0 {
-			p.material = "acrylic"
+		if callAddress(proc.Addr(), hwnd, ptr(&attribute)) != 0 {
+			material = "acrylic"
 		} else {
-			p.material = "opaque"
+			material = "opaque"
 		}
 	} else if t.Backdrop == "mica" {
 		backdrop = 2 // DWMSBT_MAINWINDOW: native wallpaper-based Mica.
 		margins := [4]int32{-1, -1, -1, -1}
-		if call(dwmapi, "DwmSetWindowAttribute", p.hwnd, 38, ptr(&backdrop), 4) == 0 && call(dwmapi, "DwmExtendFrameIntoClientArea", p.hwnd, ptr(&margins)) == 0 {
-			p.material = "mica"
+		if call(dwmapi, "DwmSetWindowAttribute", hwnd, 38, ptr(&backdrop), 4) == 0 && call(dwmapi, "DwmExtendFrameIntoClientArea", hwnd, ptr(&margins)) == 0 {
+			material = "mica"
 		} else {
-			p.material = "opaque"
+			material = "opaque"
 		}
 	}
+	return material
 }
 
 func (p *popupWindow) layeredSurface() (*bitmap, error) {
@@ -84,29 +89,19 @@ func (p *popupWindow) layeredSurface() (*bitmap, error) {
 		return nil, err
 	}
 	t := p.d.theme
-	alpha := uint8(max(1, int(surfaceOpacity(t)*255)))
-	if p.material == "acrylic" || p.material == "mica" {
-		alpha = 1
-	}
-	if p.material == "opaque" {
-		alpha = 255
-	}
-	radius := min(px(int(max(0, t.Radius)), p.scale), min(img.Rect.Dx(), img.Rect.Dy())/2)
-	for y := 0; y < img.Rect.Dy(); y++ {
-		for x := 0; x < img.Rect.Dx(); x++ {
-			c := img.RGBAAt(x, y)
-			background := uint32(c.R)<<16|uint32(c.G)<<8|uint32(c.B) == t.Background
-			a := uint8(255)
-			if background {
-				a = alpha
-			}
-			dx, dy := max(radius-x, 0, x-(img.Rect.Dx()-radius-1)), max(radius-y, 0, y-(img.Rect.Dy()-radius-1))
-			if dx*dx+dy*dy > radius*radius {
-				a = 0
-			}
-			img.SetRGBA(x, y, color.RGBA{uint8(uint32(c.R) * uint32(a) / 255), uint8(uint32(c.G) * uint32(a) / 255), uint8(uint32(c.B) * uint32(a) / 255), a})
+	var opaque []opaqueSurface
+	for i, it := range p.items {
+		if i == p.hover && !it.Disabled {
+			opaque = append(opaque, opaqueSurface{p.rows[i], px(4, p.scale)})
+		}
+		if it.Checked {
+			r := p.rows[i]
+			size := px(17, p.scale)
+			y := (r.Min.Y + r.Max.Y - size) / 2
+			opaque = append(opaque, opaqueSurface{image.Rect(r.Min.X+px(7, p.scale), y, r.Min.X+px(7, p.scale)+size, y+size), px(3, p.scale)})
 		}
 	}
+	surfaceAlpha(img, t, img.Bounds(), px(int(t.Radius), p.scale), materialAlpha(t, p.material), opaque)
 	return newBitmap(img)
 }
 
@@ -116,14 +111,7 @@ func (p *popupWindow) paintLayered() {
 		return
 	}
 	defer b.close()
-	dc := call(user32, "GetDC", 0)
-	defer call(user32, "ReleaseDC", 0, dc)
-	mem := call(gdi32, "CreateCompatibleDC", dc)
-	old := call(gdi32, "SelectObject", mem, b.handle)
-	defer func() { call(gdi32, "SelectObject", mem, old); call(gdi32, "DeleteDC", mem) }()
-	dest, size, src := point{int32(p.bounds.Min.X), int32(p.bounds.Min.Y)}, point{int32(p.bounds.Dx()), int32(p.bounds.Dy())}, point{}
-	blend := [4]byte{0, 0, 255, 1}
-	call(user32, "UpdateLayeredWindow", p.hwnd, dc, ptr(&dest), ptr(&size), mem, ptr(&src), 0, ptr(&blend), 2)
+	_ = presentBitmap(p.hwnd, p.bounds, b)
 }
 
 // Selection already freezes the desktop. Its toolbar composites against that
@@ -151,7 +139,8 @@ func (s *selectionWindow) paintFrozenPanel(dc uintptr, bar image.Rectangle) {
 					factor = 0.6
 				}
 				blend := func(v uint8, tint uint32) uint8 { return uint8(float64(v)*factor*(1-a) + float64(tint)*a + 0.5) }
-				img.SetRGBA(x, y, color.RGBA{blend(c.R, (t.Background>>16)&255), blend(c.G, (t.Background>>8)&255), blend(c.B, t.Background&255), 255})
+				tint := surfaceColor(t, y, img.Rect.Dy())
+				img.SetRGBA(x, y, color.RGBA{blend(c.R, (tint>>16)&255), blend(c.G, (tint>>8)&255), blend(c.B, tint&255), 255})
 			}
 		}
 		s.panelCache, _ = newBitmap(img)

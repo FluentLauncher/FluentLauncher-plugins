@@ -20,6 +20,7 @@ var (
 	comdlg32 = windows.NewLazySystemDLL("comdlg32.dll")
 	shell32  = windows.NewLazySystemDLL("shell32.dll")
 	ole32    = windows.NewLazySystemDLL("ole32.dll")
+	comctl32 = windows.NewLazySystemDLL("comctl32.dll")
 )
 
 // Keep pointer arguments visible to the GC until the native call returns.

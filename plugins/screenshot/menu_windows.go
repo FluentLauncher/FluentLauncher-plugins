@@ -21,6 +21,7 @@ type popupWindow struct {
 	scale         float64
 	parent, child *popupWindow
 	choose        func(int)
+	material      string
 }
 
 func (d *desktop) showMenu(owner uintptr, pos image.Point, items []menuItem, choose func(int)) {
@@ -62,17 +63,14 @@ func (d *desktop) openPopup(owner uintptr, pos image.Point, items []menuItem, pa
 	}
 	bounds = bounds.Add(image.Pt(max(0, monitor.Min.X-bounds.Min.X), max(0, monitor.Min.Y-bounds.Min.Y)))
 	p := &popupWindow{d: d, owner: owner, bounds: bounds, items: items, rows: rows, hover: -1, scale: scale, parent: parent, choose: choose}
-	p.hwnd = d.createWindow("FLScreenshotMenu", "图片操作", wsExTopmost|wsExToolwindow, owner, bounds)
+	p.hwnd = d.createWindow("FLScreenshotMenu", "图片操作", wsExTopmost|wsExToolwindow|wsExLayered, owner, bounds)
 	if p.hwnd == 0 {
 		return nil
 	}
 	d.popups[p.hwnd] = p
-	radius := px(int(max(4, d.theme.Radius)), scale)
-	region := call(gdi32, "CreateRoundRectRgn", 0, 0, bounds.Dx()+1, bounds.Dy()+1, radius*2, radius*2)
-	if call(user32, "SetWindowRgn", p.hwnd, region, 0) == 0 {
-		call(gdi32, "DeleteObject", region)
-	}
+	p.applyMaterial()
 	windowAt(p.hwnd, bounds, false)
+	p.paintLayered()
 	return p
 }
 
@@ -239,16 +237,16 @@ func (p *popupWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 
 func (p *popupWindow) paint() {
 	var ps paintStruct
-	dc := call(user32, "BeginPaint", p.hwnd, ptr(&ps))
+	call(user32, "BeginPaint", p.hwnd, ptr(&ps))
 	defer call(user32, "EndPaint", p.hwnd, ptr(&ps))
-	p.draw(dc)
+	p.paintLayered()
 }
 
 func (p *popupWindow) draw(dc uintptr) {
 	t := p.d.theme
 	r := image.Rect(0, 0, p.bounds.Dx(), p.bounds.Dy())
 	fill(dc, r, rgbRef(t.Background))
-	roundPanel(dc, r, px(int(max(4, t.Radius)), p.scale), t.Background, t.Border)
+	roundPanel(dc, r, px(int(max(0, t.Radius)), p.scale), t.Background, t.Border)
 	for i, it := range p.items {
 		r := p.rows[i]
 		if it.Label == "" {

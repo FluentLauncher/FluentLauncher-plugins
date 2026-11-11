@@ -20,6 +20,9 @@ type Theme struct {
 	InverseText  uint32  `json:"inverseText"`
 	Radius       float32 `json:"radius"`
 	Spacing      float32 `json:"spacing"`
+	// Opacity affects background only. Nil is opaque for older hosts.
+	Opacity  *float32 `json:"opacity,omitempty"`
+	Backdrop string   `json:"backdrop,omitempty"` // none, acrylic, mica
 }
 
 // ThemeHandler is optional. Return after queuing the palette on the GUI thread.

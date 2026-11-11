@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -187,7 +188,14 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 		return b.pixels()
 	}
 	d.applyTheme(testTheme(true))
-	d.openLongCapture(region, true, uiScale(fixture), fixture, fixture, region)
+	frozenFirst := fixtureViewport(content, 0, height, header, footer)
+	frozenFirst.SetRGBA(0, 0, color.RGBA{R: 237, G: 25, B: 71, A: 255})
+	marks := []annotation{{kind: "rect", points: []image.Point{image.Pt(4, 4), image.Pt(18, 18)}, color: 0xee2255, width: 2}}
+	expectedFirst, err := renderAnnotations(frozenFirst, marks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.openLongCapture(region, true, uiScale(fixture), fixture, fixture, region, longSeed{first: frozenFirst, marks: marks})
 	if d.scrolling == nil {
 		t.Fatal("long capture not opened")
 	}
@@ -212,7 +220,7 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 	if s.result.Rect.Dy() != content.Rect.Dy()+header+footer {
 		t.Fatal("wrong native stitch height", s.result.Rect)
 	}
-	first, last := fixtureViewport(content, 0, height, header, footer), fixtureViewport(content, offset, height, header, footer)
+	first, last := expectedFirst, fixtureViewport(content, offset, height, header, footer)
 	for y := 0; y < s.result.Rect.Dy(); y++ {
 		for x := 0; x < 320; x++ {
 			want := first.RGBAAt(x, min(y, height-1))

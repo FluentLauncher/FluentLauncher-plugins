@@ -46,9 +46,9 @@
       "zh-Hant": "截圖與貼圖"
     },
     "summary": {
-      "zh-Hans": "截图、自动/手动滚动长截图与原地贴图：主题界面、像素放大镜、方向键微调、旋转镜像。仅主动捕获，不上传、不留历史。",
-      "en": "Screenshots, automatic/manual vertical scrolling capture and pinned images with themed controls, a pixel magnifier, keyboard nudging, rotation and mirroring. Explicit capture only; no uploads or history.",
-      "zh-Hant": "截圖、自動/手動捲動長截圖與原地貼圖：主題介面、像素放大鏡、方向鍵微調、旋轉鏡像。僅主動擷取，不上傳、不留歷史。"
+      "zh-Hans": "截图工具条内标注与滚动拼接，支持自动/手动长截图、主题透明菜单、像素放大镜与原地贴图。仅主动捕获，不上传、不留历史。",
+      "en": "Annotate and start automatic/manual scrolling capture from the screenshot toolbar, with translucent themed menus, a pixel magnifier and pinned images. Explicit capture only; no uploads or history.",
+      "zh-Hant": "截圖工具列內標註與捲動拼接，支援自動/手動長截圖、主題透明選單、像素放大鏡與原地貼圖。僅主動擷取，不上傳、不留歷史。"
     }
   }
 ]

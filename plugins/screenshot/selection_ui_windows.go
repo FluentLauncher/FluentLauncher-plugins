@@ -7,13 +7,27 @@ import (
 	"image"
 )
 
+type captureTool struct{ id, label, hint string }
+
+var captureTools = []captureTool{
+	{"rect", "矩形", "R"}, {"ellipse", "椭圆", "E"}, {"arrow", "箭头", "A"},
+	{"pen", "画笔", "B"}, {"mosaic", "马赛克", "M"}, {"text", "文字", "T"},
+	{"undo", "撤销", "Ctrl+Z"}, {"redo", "重做", "Ctrl+Y"},
+	{"scroll", "滚动截图", "L"}, {"pin", "原地贴图", "P"}, {"save", "保存", "Ctrl+S"},
+	{"close", "取消", "Esc"}, {"check", "完成", "Enter"},
+}
+
 func (s *selectionWindow) toolbarButtons() []image.Rectangle {
 	bar := s.toolbar()
-	gap := px(4, uiScale(s.hwnd))
-	inner := bar.Inset(gap)
-	buttons := make([]image.Rectangle, 4)
+	scale := uiScale(s.hwnd)
+	gap := px(2, scale)
+	inner := image.Rect(bar.Min.X+px(4, scale), bar.Min.Y+px(3, scale), bar.Max.X-px(4, scale), bar.Min.Y+px(31, scale))
+	buttons := make([]image.Rectangle, len(captureTools))
+	if s.longMode {
+		buttons = make([]image.Rectangle, 4)
+	}
 	for i := range buttons {
-		buttons[i] = image.Rect(inner.Min.X+i*inner.Dx()/4, inner.Min.Y, inner.Min.X+(i+1)*inner.Dx()/4-gap, inner.Max.Y)
+		buttons[i] = image.Rect(inner.Min.X+i*inner.Dx()/len(buttons), inner.Min.Y, inner.Min.X+(i+1)*inner.Dx()/len(buttons)-gap, inner.Max.Y)
 	}
 	return buttons
 }
@@ -31,20 +45,22 @@ func (s *selectionWindow) toolbarHit(p image.Point) int {
 func (s *selectionWindow) paintToolbar(dc uintptr) {
 	t, scale := s.d.theme, uiScale(s.hwnd)
 	bar := s.toolbar()
-	roundPanel(dc, bar, px(int(t.Radius), scale), t.Background, t.Border)
-	labels, icons := []string{"复制", "保存", "贴图", "取消"}, []string{"copy", "save", "pin", "close"}
-	primary := 0
+	s.paintFrozenPanel(dc, bar)
+	primary := len(captureTools) - 1
 	if s.preferPin {
-		primary = 2
+		primary = 9
 	}
 	if s.longMode {
-		labels = []string{"自动", "手动", "开始", "取消"}
-		icons = []string{"scroll", "cursor", "start", "close"}
 		primary = 2
 	}
 	for i, r := range s.toolbarButtons() {
 		color := t.Text
-		if i == primary {
+		id := captureTools[i].id
+		if s.longMode {
+			id = []string{"scroll", "cursor", "start", "close"}[i]
+		}
+		disabled := !s.longMode && ((id == "undo" && len(s.marks) == 0) || (id == "redo" && len(s.redo) == 0))
+		if i == primary || id == s.tool {
 			roundPanel(dc, r, px(4, scale), t.Accent, t.Accent)
 			color = t.AccentText
 		} else if i == s.toolbarHover {
@@ -53,28 +69,105 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 		if s.longMode && ((i == 0 && s.longAuto) || (i == 1 && !s.longAuto)) {
 			roundPanel(dc, r, px(4, scale), t.SurfaceHover, t.Accent)
 		}
-		if i == 3 && i == s.toolbarHover {
+		if id == "close" && i == s.toolbarHover {
 			color = t.Danger
 		}
-		size := px(17, scale)
-		x := r.Min.X + px(12, scale)
+		if disabled {
+			color = t.TextMuted
+		}
+		size := px(18, scale)
+		x := (r.Min.X + r.Max.X - size) / 2
 		y := (r.Min.Y + r.Max.Y - size) / 2
-		icon(dc, icons[i], image.Rect(x, y, x+size, y+size), color)
-		textAligned(dc, labels[i], image.Rect(x+size+px(7, scale), r.Min.Y, r.Max.X-px(4, scale), r.Max.Y), rgbRef(color), false)
-	}
-	if s.toolbarHover >= 0 {
-		hints := []string{"复制 · Enter / Ctrl+C", "保存 · Ctrl+S", "原地贴图 · P", "取消 · Esc"}
-		if s.preferPin {
-			hints[0] = "复制 · Ctrl+C"
-			hints[2] = "原地贴图 · Enter / P"
+		if !s.longMode {
+			icon(dc, id, image.Rect(x, y, x+size, y+size), color)
 		}
 		if s.longMode {
-			hints = []string{"自动向下滚动 · A", "手动滚动后采集 · M", "开始长截图 · Enter", "取消 · Esc"}
+			text(dc, []string{"自动", "手动", "开始", "取消"}[i], r, rgbRef(color))
+		}
+		if i == s.toolbarFocus {
+			frame(dc, r.Inset(1), t.Accent, 1)
+		}
+	}
+	hintIndex := s.toolbarHover
+	if hintIndex < 0 {
+		hintIndex = s.toolbarFocus
+	}
+	if hintIndex >= 0 {
+		hint := captureTools[hintIndex].label + " · " + captureTools[hintIndex].hint
+		if s.longMode {
+			hint = []string{"自动向下滚动 · A", "手动滚动后采集 · M", "开始长截图 · Enter", "取消 · Esc"}[hintIndex]
 		}
 		r := image.Rect(bar.Min.X, max(0, bar.Min.Y-px(34, scale)), min(s.image.Rect.Dx(), bar.Min.X+px(205, scale)), max(0, bar.Min.Y-px(34, scale))+px(28, scale))
 		roundPanel(dc, r, px(4, scale), t.Inverse, t.Inverse)
-		text(dc, hints[s.toolbarHover], r, rgbRef(t.InverseText))
+		text(dc, hint, r, rgbRef(t.InverseText))
 	}
+	if s.tool != "" && !s.longMode {
+		for i, r := range s.inkOptions() {
+			if i < 4 {
+				c := s.inkColors()[i]
+				roundPanel(dc, r.Inset(px(5, scale)), px(3, scale), c, c)
+				if c == s.ink {
+					frame(dc, r, t.Accent, 1)
+				}
+			} else {
+				if s.strokeWidth == []int{1, 3, 6}[i-4] {
+					roundPanel(dc, r, px(3, scale), t.SurfaceHover, t.Border)
+				}
+				line(dc, image.Pt(r.Min.X+5, (r.Min.Y+r.Max.Y)/2), image.Pt(r.Max.X-5, (r.Min.Y+r.Max.Y)/2), t.Text, []int{1, 3, 6}[i-4])
+			}
+		}
+		textAligned(dc, "再次点击工具可调整选区", image.Rect(bar.Min.X+px(220, scale), bar.Min.Y+px(34, scale), bar.Max.X, bar.Max.Y), rgbRef(t.TextMuted), false)
+	}
+}
+
+func (s *selectionWindow) inkColors() []uint32 {
+	t := s.d.theme
+	return []uint32{t.Danger, t.Accent, t.Text, t.AccentText}
+}
+func (s *selectionWindow) inkOptions() []image.Rectangle {
+	bar, scale := s.toolbar(), uiScale(s.hwnd)
+	var out []image.Rectangle
+	for i := 0; i < 7; i++ {
+		x := bar.Min.X + px(5+i*30, scale)
+		out = append(out, image.Rect(x, bar.Min.Y+px(35, scale), x+px(26, scale), bar.Min.Y+px(59, scale)))
+	}
+	return out
+}
+
+func (s *selectionWindow) activateTool(index int) {
+	s.finishText(true)
+	if s.longMode {
+		if index < 2 {
+			s.longAuto = index == 0
+			invalidate(s.hwnd)
+		} else if index == 3 {
+			s.close()
+		} else {
+			s.output("scroll")
+		}
+		return
+	}
+	id := captureTools[index].id
+	switch id {
+	case "rect", "ellipse", "arrow", "pen", "mosaic", "text":
+		if s.tool == id {
+			s.tool = ""
+		} else {
+			s.tool = id
+		}
+	case "undo", "redo":
+		s.undoMark(id == "redo")
+	case "scroll":
+		s.longAuto = true
+		s.output("scroll")
+	case "close":
+		s.close()
+	case "check":
+		s.output(s.defaultOutput())
+	default:
+		s.output(id)
+	}
+	invalidate(s.hwnd)
 }
 
 func (s *selectionWindow) paintSize(dc uintptr) {

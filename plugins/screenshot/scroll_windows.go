@@ -16,23 +16,29 @@ type scrollAction struct {
 	auto bool
 }
 
+type longSeed struct {
+	first *image.RGBA
+	marks []annotation
+}
+
 type scrollWindow struct {
-	d                          *desktop
-	hwnd, target, root         uintptr
-	region, bounds, rootBounds image.Rectangle
-	ctx                        context.Context
-	cancel                     context.CancelFunc
-	discard                    atomic.Bool
-	finishRequested            atomic.Bool
-	actions                    chan scrollAction
-	preview, auto, busy        bool
-	status                     string
-	frames, height             int
-	result, lastFrame          *image.RGBA
-	bitmap                     *bitmap
-	offset                     int
-	hover, focus               int
-	dragScroll                 bool
+	d                            *desktop
+	hwnd, target, root           uintptr
+	region, bounds, rootBounds   image.Rectangle
+	ctx                          context.Context
+	cancel                       context.CancelFunc
+	discard                      atomic.Bool
+	finishRequested              atomic.Bool
+	actions                      chan scrollAction
+	preview, auto, busy          bool
+	status                       string
+	frames, height               int
+	result, rawResult, lastFrame *image.RGBA
+	bitmap                       *bitmap
+	offset                       int
+	hover, focus                 int
+	dragScroll                   bool
+	marks                        []annotation
 
 	capturePinsHidden, captureUIHidden, themeDeferred bool
 }
@@ -74,7 +80,7 @@ func longPanelBounds(region, monitor image.Rectangle, size image.Point, gap int)
 	return image.Rectangle{Min: p, Max: p.Add(size)}
 }
 
-func (d *desktop) startLongCapture(region image.Rectangle, auto bool, scale float64) {
+func (d *desktop) startLongCapture(region image.Rectangle, auto bool, scale float64, seeds ...longSeed) {
 	if region.Dx() < 64 || region.Dy() < 96 {
 		d.report(d.controller, errors.New("长截图选区至少需要 64×96 像素，请重新选择内容区域"))
 		return
@@ -88,10 +94,10 @@ func (d *desktop) startLongCapture(region image.Rectangle, auto bool, scale floa
 		d.report(d.controller, err)
 		return
 	}
-	d.openLongCapture(region, auto, scale, target, root, rootBounds)
+	d.openLongCapture(region, auto, scale, target, root, rootBounds, seeds...)
 }
 
-func (d *desktop) openLongCapture(region image.Rectangle, auto bool, scale float64, target, root uintptr, rootBounds image.Rectangle) {
+func (d *desktop) openLongCapture(region image.Rectangle, auto bool, scale float64, target, root uintptr, rootBounds image.Rectangle, seeds ...longSeed) {
 	monitor := currentMonitor(region.Min.Add(region.Size().Div(2)))
 	size := image.Pt(min(px(520, scale), monitor.Dx()-16), px(104, scale))
 	bounds := longPanelBounds(region, monitor, size, px(8, scale))
@@ -106,7 +112,12 @@ func (d *desktop) openLongCapture(region image.Rectangle, auto bool, scale float
 	d.active.Add(1)
 	windowAt(s.hwnd, bounds, false)
 	call(user32, "SetForegroundWindow", root)
-	s.startWorker(auto, nil)
+	var seed *stitcher
+	if len(seeds) > 0 {
+		seed = newStitcher(seeds[0].first)
+		s.marks = seeds[0].marks
+	}
+	s.startWorker(auto, seed)
 }
 
 func (s *scrollWindow) close(discard bool) {
@@ -454,7 +465,12 @@ captureLoop:
 	if s.discard.Load() {
 		return
 	}
-	img := builder.result()
+	raw := builder.result()
+	img, err := renderAnnotations(raw, s.marks)
+	if err != nil {
+		s.failStart(err)
+		return
+	}
 	last := builder.last
 	frames := builder.frames
 	builder.parts = nil
@@ -469,6 +485,7 @@ captureLoop:
 			return
 		}
 		s.result, s.lastFrame, s.bitmap = img, last, bmp
+		s.rawResult = raw
 		s.frames = frames
 		s.height = img.Rect.Dy()
 		s.status = status
@@ -504,7 +521,7 @@ func (s *scrollWindow) resume() {
 		s.d.report(s.hwnd, errLongLimit)
 		return
 	}
-	seed := &stitcher{parts: []imagePart{{s.result, 0, s.result.Rect.Dy()}}, last: s.lastFrame, origin: s.result.Rect.Dy() - s.lastFrame.Rect.Dy(), height: s.result.Rect.Dy(), frames: s.frames}
+	seed := &stitcher{parts: []imagePart{{s.rawResult, 0, s.rawResult.Rect.Dy()}}, last: s.lastFrame, origin: s.rawResult.Rect.Dy() - s.lastFrame.Rect.Dy(), height: s.rawResult.Rect.Dy(), frames: s.frames}
 	s.bitmap.close()
 	s.bitmap = nil
 	s.bounds = longPanelBounds(s.region, currentMonitor(s.region.Min), image.Pt(min(px(520, uiScale(s.hwnd)), currentMonitor(s.region.Min).Dx()-16), px(104, uiScale(s.hwnd))), px(8, uiScale(s.hwnd)))

@@ -92,6 +92,8 @@ SDK 可选实现 `ActivityHandler.HasActivity(context.Context) (bool, error)`，
 
 SDK 可选实现 `ThemeHandler.SetTheme(context.Context, Theme) error`，initialize 自动声明 `theme`。宿主在握手后、首次动作前发送 `setTheme`，配色变化（包括系统模式变化）时更新现有进程；插件仅将其排入 GUI 消息队列，不等待绘制。无此能力的旧插件不接收新方法。
 
+可选表面字段 `opacity`（0～1，仅背景）和 `backdrop`（`none` / `acrylic` / `mica`）随同 `setTheme` 发送；缺省不透明、无材质，保持旧宿主兼容。文字和图标不随背景不透明度改变。高对比度传入不透明无材质；Mica 的不透明度固定为 1，由系统管理背景。字段为向后兼容扩展，协议版本仍为 1；插件必须在系统材质不可用时回退主题底色。
+
 `Theme` 传递解析后的 `dark`、`background`、`surface`、`surfaceHover`、`border`、`text`、`textMuted`、`accent`、`accentText`、`danger`、`inverse`、`inverseText`、`radius` 与 `spacing`。颜色为不透明 sRGB 整数 `0xRRGGBB`，JSON 使用十进制数；宿主将透明表面合成到背景色。工具字号由插件保留，搜索面板字号不传入。
 
 主题变更不会启动休眠插件，也不刷新空闲时间。宿主正常停止时先关闭 stdin，给插件最多 400ms 处理 EOF 清理，然后仍通过 Job Object 回收；协议超时与异常停止继续立即结束进程。

@@ -10,7 +10,7 @@
 | `plugins/echo/` | 最小查询与复制示例 |
 | `plugins/devtools/` | 多关键词、文本工具、多个结果与单元测试 |
 | `plugins/clipboard/` | Windows API、内存状态与并发示例 |
-| `plugins/screenshot/` | 区域 / 全屏 / 滚动长截图、主题菜单、像素放大镜、原地贴图；[使用与验证](docs/screenshot.md) |
+| `plugins/screenshot/` | 紧凑截图工具条、标注、滚动拼接、主题透明菜单、像素放大镜与原地贴图；[使用与验证](docs/screenshot.md) |
 | `templates/go-plugin/` | 第三方插件项目模板 |
 | `catalog.source.json` | 官方插件的 ID、三语名称与简介 |
 | `tools/package/` | 从 manifest 构建 ZIP、生成目录并签名 |

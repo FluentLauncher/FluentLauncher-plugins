@@ -3,6 +3,7 @@ package pluginsdk
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -31,5 +32,15 @@ func TestOptionalThemeHandler(t *testing.T) {
 	old := &server{pluginID: "vendor.old", handler: &handler{}}
 	if _, err := old.handle(context.Background(), request{Method: "setTheme", Params: data}); err == nil {
 		t.Fatal("old handler accepted theme")
+	}
+	opacity := float32(0.42)
+	theme.Opacity = &opacity
+	theme.Backdrop = "acrylic"
+	data, _ = json.Marshal(theme)
+	if _, err := s.handle(context.Background(), request{Method: "setTheme", Params: data}); err != nil || !reflect.DeepEqual(h.theme, theme) {
+		t.Fatal("surface appearance round trip", h.theme, err)
+	}
+	if _, err := s.handle(context.Background(), request{Method: "setTheme", Params: json.RawMessage(`{"background":1193046}`)}); err != nil || h.theme.Opacity != nil || h.theme.Backdrop != "" {
+		t.Fatal("old host compatibility", h.theme, err)
 	}
 }

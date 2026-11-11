@@ -30,6 +30,8 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 		return
 	}
 	if d.selection != nil {
+		d.selection.panelCache.close()
+		d.selection.panelCache = nil
 		invalidate(d.selection.hwnd)
 	}
 	if d.scrolling != nil {
@@ -49,6 +51,7 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 		windowAt(d.scrolling.hwnd, d.scrolling.bounds, false)
 	}
 	for p := d.menuRoot; p != nil; p = p.child {
+		p.applyMaterial()
 		windowAt(p.hwnd, p.bounds, false)
 		invalidate(p.hwnd)
 	}
@@ -84,6 +87,54 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 	l := func(x, y, x2, y2 int) { line(dc, p(x, y), p(x2, y2), c, max(1, r.Dx()/12)) }
 	box := func(x, y, x2, y2 int) { l(x, y, x2, y); l(x2, y, x2, y2); l(x2, y2, x, y2); l(x, y2, x, y) }
 	switch name {
+	case "rect":
+		box(3, 4, 17, 16)
+	case "ellipse":
+		pen := call(gdi32, "CreatePen", 0, max(1, r.Dx()/12), rgbRef(c))
+		oldPen := call(gdi32, "SelectObject", dc, pen)
+		oldBrush := call(gdi32, "SelectObject", dc, call(gdi32, "GetStockObject", 5))
+		a, b := p(3, 3), p(17, 17)
+		call(gdi32, "Ellipse", dc, coord(a.X), coord(a.Y), coord(b.X), coord(b.Y))
+		call(gdi32, "SelectObject", dc, oldBrush)
+		call(gdi32, "SelectObject", dc, oldPen)
+		call(gdi32, "DeleteObject", pen)
+	case "arrow":
+		l(3, 17, 17, 3)
+		l(9, 3, 17, 3)
+		l(17, 3, 17, 11)
+	case "pen":
+		l(4, 13, 13, 4)
+		l(13, 4, 16, 7)
+		l(16, 7, 7, 16)
+		l(7, 16, 3, 17)
+		l(3, 17, 4, 13)
+	case "mosaic":
+		box(2, 2, 18, 18)
+		for y := 4; y < 17; y += 5 {
+			for x := 4; x < 17; x += 5 {
+				if (x+y)%2 == 0 {
+					fill(dc, image.Rectangle{Min: p(x, y), Max: p(x+3, y+3)}, rgbRef(c))
+				}
+			}
+		}
+	case "text":
+		l(3, 4, 17, 4)
+		l(10, 4, 10, 17)
+		l(6, 17, 14, 17)
+	case "undo":
+		l(7, 3, 3, 7)
+		l(3, 7, 7, 11)
+		l(3, 7, 13, 7)
+		l(13, 7, 17, 11)
+		l(17, 11, 17, 16)
+		l(17, 16, 8, 16)
+	case "redo":
+		l(13, 3, 17, 7)
+		l(17, 7, 13, 11)
+		l(17, 7, 7, 7)
+		l(7, 7, 3, 11)
+		l(3, 11, 3, 16)
+		l(3, 16, 12, 16)
 	case "scroll":
 		box(3, 2, 12, 18)
 		l(5, 6, 10, 6)

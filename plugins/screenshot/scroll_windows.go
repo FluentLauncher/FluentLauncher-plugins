@@ -19,13 +19,16 @@ type longSeed struct {
 type scrollWindow struct {
 	d                                *desktop
 	hwnd                             uintptr
+	outline                          uintptr
 	region, bounds                   image.Rectangle
 	ctx                              context.Context
 	cancel                           context.CancelFunc
 	discard, finishRequested, paused atomic.Bool
 	preview, busy                    bool
 	status                           string
+	notice                           string
 	frames, height                   int
+	thumbnailWidth                   int
 	result, rawResult, lastFrame     *image.RGBA
 	bitmap, thumbnail                *bitmap
 	paintBuffer                      paintBuffer
@@ -84,6 +87,12 @@ func (d *desktop) openLongCapture(region image.Rectangle, scale float64, seeds .
 		return
 	}
 	d.scrolling = s
+	if !s.openSourceFrame() {
+		d.scrolling = nil
+		call(user32, "DestroyWindow", s.hwnd)
+		d.report(d.controller, errors.New("无法创建长截图选区边框"))
+		return
+	}
 	d.capturing.Store(true)
 	d.active.Add(1)
 	var seed *stitcher
@@ -91,6 +100,8 @@ func (d *desktop) openLongCapture(region image.Rectangle, scale float64, seeds .
 		seed = newStitcher(seeds[0].first)
 		s.marks = seeds[0].marks
 	}
+	s.thumbnailWidth = max(1, s.view().Dx())
+	s.updatePreviewRegion()
 	windowAt(s.hwnd, bounds, false)
 	s.startWorker(seed)
 }
@@ -109,6 +120,7 @@ func (s *scrollWindow) close(discard bool) {
 		call(user32, "ReleaseCapture")
 	}
 	call(user32, "DestroyWindow", s.hwnd)
+	call(user32, "DestroyWindow", s.outline)
 	s.bitmap.close()
 	s.bitmap = nil
 	s.thumbnail.close()
@@ -123,6 +135,8 @@ func (s *scrollWindow) startWorker(seed *stitcher) {
 	s.finishRequested.Store(false)
 	s.paused.Store(false)
 	s.hover = -1
+	s.focus = 2
+	invalidate(s.outline)
 	s.ctx, s.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 	// Hide excluded pins once for the session, restoring on finish/cancel.
 	if !s.d.preferences.IncludePins {
@@ -174,13 +188,16 @@ func (s *scrollWindow) capture(ctx context.Context) (*image.RGBA, error) {
 }
 
 func (s *scrollWindow) updateLive(builder *stitcher, status string) {
-	img := builder.thumbnail(280, 1400)
+	img := builder.thumbnail(s.thumbnailWidth, 1400)
 	factor := float64(img.Rect.Dx()) / float64(builder.last.Rect.Dx())
 	marks := make([]annotation, len(s.marks))
 	for i, m := range s.marks {
 		marks[i] = m
 		marks[i].points = make([]image.Point, len(m.points))
 		marks[i].width = max(1, int(float64(m.width)*factor))
+		if m.kind == "text" {
+			marks[i].fontHeight = max(1, int(float64(max(18, m.width*6))*factor))
+		}
 		for j, p := range m.points {
 			marks[i].points[j] = image.Pt(int(float64(p.X)*factor), int(float64(p.Y)*factor))
 		}
@@ -206,7 +223,8 @@ func (s *scrollWindow) updateLive(builder *stitcher, status string) {
 		s.frames = frames
 		s.height = height
 		s.status = status
-		invalidate(s.hwnd)
+		s.notice = ""
+		s.updatePreviewRegion()
 	}); err != nil {
 		b.close()
 	}
@@ -214,8 +232,8 @@ func (s *scrollWindow) updateLive(builder *stitcher, status string) {
 
 func (s *scrollWindow) publishStatus(status string) {
 	_ = s.d.post(func() {
-		if s.d.scrolling == s && !s.preview && s.status != status {
-			s.status = status
+		if s.d.scrolling == s && !s.preview && s.notice != status {
+			s.notice = status
 			invalidate(s.hwnd)
 		}
 	})
@@ -275,7 +293,7 @@ collection:
 			break
 		}
 		if err != nil {
-			s.publishStatus("未拼接：请慢慢滚动，或回滚一些再试")
+			s.publishStatus("未找到重叠，请稍回滚后重试")
 			continue
 		}
 		if !added {

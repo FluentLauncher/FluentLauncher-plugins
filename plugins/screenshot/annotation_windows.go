@@ -13,11 +13,12 @@ import (
 )
 
 type annotation struct {
-	kind   string
-	points []image.Point
-	color  uint32
-	width  int
-	text   string
+	kind       string
+	points     []image.Point
+	color      uint32
+	width      int
+	text       string
+	fontHeight int // Explicit size only for the scaled live preview.
 }
 
 func (m annotation) draw(dc uintptr, source *image.RGBA, offset image.Point) {
@@ -70,7 +71,11 @@ func (m annotation) draw(dc uintptr, source *image.RGBA, offset image.Point) {
 			}
 		}
 	case "text":
-		font := logFont{Height: -int32(max(18, m.width*6)), Weight: 400, Quality: 5}
+		height := m.fontHeight
+		if height == 0 {
+			height = max(18, m.width*6)
+		}
+		font := logFont{Height: -int32(height), Weight: 400, Quality: 5}
 		face, _ := windows.UTF16FromString("Segoe UI")
 		copy(font.Face[:], face)
 		h := call(gdi32, "CreateFontIndirectW", ptr(&font))

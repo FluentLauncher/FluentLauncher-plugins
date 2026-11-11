@@ -45,7 +45,7 @@ func newDesktop() (*desktop, error) {
 	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
@@ -124,6 +124,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	}
 	if s := d.scrolling; s != nil && hwnd == s.hwnd {
 		return s.handle(msg, wparam, lparam)
+	}
+	if s := d.scrolling; s != nil && hwnd == s.outline {
+		return s.paintSourceFrame(msg, wparam, lparam)
 	}
 	if p := d.popups[hwnd]; p != nil {
 		return p.handle(msg, wparam, lparam)

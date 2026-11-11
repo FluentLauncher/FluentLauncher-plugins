@@ -1,12 +1,12 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": ["截图", "screenshot", "snap", "截屏"],
   "permissions": [],
-  "description": "紧凑截图工具条、标注与原地贴图；长截图由用户滚动页面，小窗实时预览并自动拼接，不驱动滚动。主题透明菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
+  "description": "截图标注与原地贴图；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
   "commands": [
     {"id": "region", "title": "区域截图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+A"]},
     {"id": "region-pin", "title": "区域截图并原地贴图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+P"]},

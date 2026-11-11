@@ -119,14 +119,19 @@ func TestLongThumbnailIncludesAllRetainedSegments(t *testing.T) {
 		}
 	}
 	full := s.result()
-	for _, size := range []image.Point{image.Pt(48, 90), image.Pt(24, 200)} {
+	for _, size := range []image.Point{image.Pt(48, 240), image.Pt(24, 120)} {
 		thumb := s.thumbnail(size.X, size.Y)
 		if thumb.Rect.Dx() > size.X || thumb.Rect.Dy() > size.Y {
 			t.Fatal("thumbnail exceeded bounds", thumb.Rect)
 		}
 		for y := 0; y < thumb.Rect.Dy(); y++ {
 			for x := 0; x < thumb.Rect.Dx(); x++ {
-				if thumb.RGBAAt(x, y) != full.RGBAAt(x*full.Rect.Dx()/thumb.Rect.Dx(), y*full.Rect.Dy()/thumb.Rect.Dy()) {
+				step := full.Rect.Dx() / thumb.Rect.Dx()
+				sx, sy := x*step+step/2-1, y*step+step/2-1
+				a, b, c, d := full.RGBAAt(sx, sy), full.RGBAAt(sx+1, sy), full.RGBAAt(sx, sy+1), full.RGBAAt(sx+1, sy+1)
+				mean := func(a, b, c, d uint8) uint8 { return uint8((int(a) + int(b) + int(c) + int(d) + 2) / 4) }
+				want := color.RGBA{mean(a.R, b.R, c.R, d.R), mean(a.G, b.G, c.G, d.G), mean(a.B, b.B, c.B, d.B), 255}
+				if thumb.RGBAAt(x, y) != want {
 					t.Fatalf("thumbnail seam mismatch at %d,%d", x, y)
 				}
 			}

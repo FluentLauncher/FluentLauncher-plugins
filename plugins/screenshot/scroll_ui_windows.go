@@ -12,19 +12,31 @@ func (s *scrollWindow) showPreview() {
 	s.hover = -1
 	s.focus = 0
 	s.offset = 0
-	invalidate(s.hwnd)
+	s.updatePreviewRegion()
+	invalidate(s.outline)
+}
+
+func (s *scrollWindow) toolbar() image.Rectangle {
+	scale := uiScale(s.hwnd)
+	return image.Rect(0, s.bounds.Dy()-px(64, scale), s.bounds.Dx(), s.bounds.Dy())
+}
+
+// Visual order keeps the destructive action away from the confirmation at
+// the far right, while existing action IDs remain stable for direct commands.
+func (s *scrollWindow) buttonActions() []int {
+	if s.preview {
+		return []int{0, 1, 2, 3, 4}
+	}
+	return []int{0, 2, 1}
 }
 
 func (s *scrollWindow) buttons() []image.Rectangle {
 	scale := uiScale(s.hwnd)
-	pad, gap, h := px(6, scale), px(4, scale), px(28, scale)
-	count := 3
-	if s.preview {
-		count = 5
-	}
+	pad, gap, h := px(6, scale), px(4, scale), px(32, scale)
+	count := len(s.buttonActions())
 	w := (s.bounds.Dx() - pad*2 - gap*(count-1)) / count
 	result := make([]image.Rectangle, count)
-	y := pad
+	y := s.bounds.Dy() - pad - h
 	for i := range result {
 		x := pad + i*(w+gap)
 		result[i] = image.Rect(x, y, x+w, y+h)
@@ -34,7 +46,52 @@ func (s *scrollWindow) buttons() []image.Rectangle {
 
 func (s *scrollWindow) view() image.Rectangle {
 	scale := uiScale(s.hwnd)
-	return image.Rect(px(10, scale), px(64, scale), s.bounds.Dx()-px(20, scale), s.bounds.Dy()-px(30, scale))
+	right := px(2, scale)
+	height := s.toolbar().Min.Y - px(12, scale)
+	if s.preview && s.result != nil && float64(s.result.Rect.Dy())*min(1, float64(s.bounds.Dx()-px(4, scale))/float64(s.result.Rect.Dx())) > float64(height) {
+		right = px(14, scale)
+	}
+	return image.Rect(px(2, scale), px(2, scale), s.bounds.Dx()-right, s.toolbar().Min.Y-px(10, scale))
+}
+
+func (s *scrollWindow) imageDestination() image.Rectangle {
+	v := s.view()
+	w, h := s.region.Dx(), s.region.Dy()
+	if s.preview && s.result != nil {
+		w, h = s.result.Rect.Dx(), s.visibleRows()
+	}
+	if !s.preview && s.thumbnail != nil {
+		w, h = s.thumbnail.width, s.thumbnail.height
+	}
+	factor := min(1, float64(v.Dx())/float64(w), float64(v.Dy())/float64(h))
+	if s.preview {
+		factor = s.previewScale()
+	}
+	size := image.Pt(max(1, int(float64(w)*factor)), max(1, int(float64(h)*factor)))
+	pos := image.Pt(v.Min.X+(v.Dx()-size.X)/2, v.Max.Y-size.Y)
+	return image.Rectangle{Min: pos, Max: pos.Add(size)}
+}
+
+func (s *scrollWindow) imageFrame() image.Rectangle { return s.imageDestination().Inset(-1) }
+
+func (s *scrollWindow) buttonHint(index int) string {
+	if index < 0 || index >= len(s.buttonActions()) {
+		return ""
+	}
+	action := s.buttonActions()[index]
+	if s.preview {
+		return []string{"复制 · Ctrl+C", "保存 · Ctrl+S", "原地贴图", "继续滚动采集", "关闭 · Esc"}[action]
+	}
+	if action == 0 {
+		if s.paused.Load() {
+			return "继续滚动采集"
+		}
+		return "暂停采集"
+	}
+	if action == 1 {
+		return "完成并检查长图"
+	}
+	return "取消 · Esc"
 }
 
 func (s *scrollWindow) visibleRows() int {
@@ -85,18 +142,22 @@ func (s *scrollWindow) draw(dc uintptr) {
 	t, scale := s.d.theme, uiScale(s.hwnd)
 	r := image.Rect(0, 0, s.bounds.Dx(), s.bounds.Dy())
 	fill(dc, r, rgbRef(t.Background))
-	roundPanel(dc, r, px(int(t.Radius), scale), t.Background, t.Border)
+	bar := s.toolbar()
+	roundPanel(dc, bar, px(int(t.Radius), scale), t.Background, t.Border)
 	labels := []string{"暂停", "完成", "取消"}
+	icons := []string{"pause", "check", "close"}
 	if s.paused.Load() {
 		labels[0] = "继续"
 	}
 	if s.preview {
 		labels = []string{"复制", "保存", "贴图", "继续", "关闭"}
+		icons = []string{"copy", "save", "pin", "start", "close"}
 	}
 	for i, r := range s.buttons() {
-		bg, fg := t.Surface, t.Text
+		action := s.buttonActions()[i]
+		bg, fg := t.Background, t.Text
 		disabled := s.busy
-		if !s.preview && s.finishRequested.Load() && i != 2 {
+		if !s.preview && s.finishRequested.Load() && action != 2 {
 			disabled = true
 		}
 		if i == s.hover && !disabled {
@@ -106,63 +167,78 @@ func (s *scrollWindow) draw(dc uintptr) {
 		if s.preview {
 			primary = 0
 		}
-		if i == primary {
+		if action == primary {
 			bg, fg = t.Accent, t.AccentText
 		}
 		if disabled {
 			fg = t.TextMuted
 			bg = t.Surface
 		}
+		if action == 2 && !s.preview && i == s.hover {
+			fg = t.Danger
+		}
 		roundPanel(dc, r, px(4, scale), bg, bg)
-		text(dc, labels[i], r, rgbRef(fg))
+		size := px(18, scale)
+		x := (r.Min.X + r.Max.X - size) / 2
+		if !s.preview {
+			x = r.Min.X + px(9, scale)
+		}
+		y := (r.Min.Y + r.Max.Y - size) / 2
+		iconName := icons[action]
+		if !s.preview && action == 0 && s.paused.Load() {
+			iconName = "start"
+		}
+		icon(dc, iconName, image.Rect(x, y, x+size, y+size), fg)
+		if !s.preview {
+			text(dc, labels[action], image.Rect(x+size+px(4, scale), r.Min.Y, r.Max.X-px(3, scale), r.Max.Y), rgbRef(fg))
+		}
 		if call(user32, "GetFocus") == s.hwnd && i == s.focus {
-			frame(dc, r.Inset(px(2, scale)), t.Accent, 1)
+			focusColor := t.Accent
+			if action == primary {
+				focusColor = t.AccentText
+			}
+			frame(dc, r.Inset(px(2, scale)), focusColor, 2)
 		}
 	}
-	textAligned(dc, s.progressText(), image.Rect(px(10, scale), px(36, scale), s.bounds.Dx()-px(8, scale), px(60, scale)), rgbRef(t.Text), false)
+	caption := fmt.Sprintf("%d × %d · %d 帧", s.region.Dx(), max(s.region.Dy(), s.height), max(1, s.frames))
+	if s.paused.Load() {
+		caption = "已暂停 · " + caption
+	}
+	if s.finishRequested.Load() && !s.preview {
+		caption = "正在生成完整图片…"
+	}
+	if s.busy {
+		caption = "正在输出完整图片…"
+	}
+	if s.notice != "" && !s.preview {
+		caption = s.notice
+	}
+	hintIndex := s.hover
+	if hintIndex < 0 && call(user32, "GetFocus") == s.hwnd {
+		hintIndex = s.focus
+	}
+	if hint := s.buttonHint(hintIndex); hint != "" && !s.busy && (s.preview || (!s.finishRequested.Load() && s.notice == "")) {
+		caption = hint
+	}
+	textAligned(dc, caption, image.Rect(bar.Min.X+px(10, scale), bar.Min.Y+px(3, scale), bar.Max.X-px(10, scale), bar.Min.Y+px(25, scale)), rgbRef(t.TextMuted), false)
 	if !s.preview {
-		view := s.view()
 		if s.thumbnail != nil {
-			factor := min(1, float64(view.Dx())/float64(s.thumbnail.width), float64(view.Dy())/float64(s.thumbnail.height))
-			size := image.Pt(max(1, int(float64(s.thumbnail.width)*factor)), max(1, int(float64(s.thumbnail.height)*factor)))
-			pos := view.Min.Add(image.Pt((view.Dx()-size.X)/2, 0))
-			s.thumbnail.draw(dc, image.Rectangle{Min: pos, Max: pos.Add(size)}, image.Rect(0, 0, s.thumbnail.width, s.thumbnail.height))
+			s.thumbnail.draw(dc, s.imageDestination(), image.Rect(0, 0, s.thumbnail.width, s.thumbnail.height))
 		} else {
-			text(dc, "正在准备预览…", view, rgbRef(t.TextMuted))
+			text(dc, "正在准备预览…", s.view(), rgbRef(t.TextMuted))
 		}
-		status := s.status
-		if s.paused.Load() {
-			status = "已暂停 · 点继续后滚动页面"
-		}
-		if s.finishRequested.Load() {
-			status = "正在生成完整图片…"
-		}
-		textAligned(dc, status, image.Rect(px(8, scale), s.bounds.Dy()-px(26, scale), s.bounds.Dx()-px(6, scale), s.bounds.Dy()-px(3, scale)), rgbRef(t.TextMuted), false)
+		frame(dc, s.imageFrame(), t.Border, 1)
 		return
 	}
-	view := s.view()
 	rows := s.visibleRows()
-	dest := view
-	width := int(float64(s.result.Rect.Dx()) * s.previewScale())
-	dest.Min.X += (view.Dx() - width) / 2
-	dest.Max.X = dest.Min.X + width
-	dest.Max.Y = dest.Min.Y + int(float64(rows)*s.previewScale())
+	dest := s.imageDestination()
 	s.bitmap.draw(dc, dest, image.Rect(0, s.offset, s.result.Rect.Dx(), s.offset+rows))
+	frame(dc, s.imageFrame(), t.Border, 1)
 	track, thumb := s.scrollbar()
-	roundPanel(dc, track, px(3, scale), t.Surface, t.Surface)
 	if rows < s.result.Rect.Dy() {
+		roundPanel(dc, track, px(3, scale), t.Surface, t.Surface)
 		roundPanel(dc, thumb, px(3, scale), t.Accent, t.Accent)
 	}
-	y := s.bounds.Dy() - px(26, scale)
-	info := fmt.Sprintf("%d × %d · 滚轮查看", s.result.Rect.Dx(), s.result.Rect.Dy())
-	status := s.status
-	if s.busy {
-		status = "正在输出完整分辨率图片…"
-	}
-	if !s.busy {
-		status = info
-	}
-	textAligned(dc, status, image.Rect(px(8, scale), y, s.bounds.Dx()-px(6, scale), s.bounds.Dy()-px(3, scale)), rgbRef(t.TextMuted), false)
 }
 
 func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
@@ -218,7 +294,7 @@ func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		for i, r := range s.buttons() {
 			if mousePoint(lparam).In(r) {
 				s.focus = i
-				s.activate(i)
+				s.activate(s.buttonActions()[i])
 				break
 			}
 		}
@@ -246,7 +322,7 @@ func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 			s.focus = (s.focus + delta + len(s.buttons())) % len(s.buttons())
 			invalidate(s.hwnd)
 		case 0x0d, 0x20:
-			s.activate(s.focus)
+			s.activate(s.buttonActions()[s.focus])
 		case 'C':
 			if s.preview && ctrlDown() {
 				s.activate(0)
@@ -304,6 +380,7 @@ func (s *scrollWindow) activate(index int) {
 		case 2:
 			s.close(true)
 		}
+		invalidate(s.outline)
 		invalidate(s.hwnd)
 		return
 	}

@@ -27,6 +27,8 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 	d.theme = theme
 	if d.scrolling != nil && d.scrolling.capturePinsHidden {
 		d.scrolling.themeDeferred = true
+		d.scrolling.updatePreviewRegion()
+		invalidate(d.scrolling.outline)
 		return
 	}
 	if d.selection != nil {
@@ -35,7 +37,8 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 		invalidate(d.selection.hwnd)
 	}
 	if d.scrolling != nil {
-		invalidate(d.scrolling.hwnd)
+		d.scrolling.updatePreviewRegion()
+		invalidate(d.scrolling.outline)
 	}
 	for _, hwnd := range d.pinOrder {
 		p := d.pins[hwnd]
@@ -87,6 +90,9 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 	l := func(x, y, x2, y2 int) { line(dc, p(x, y), p(x2, y2), c, max(1, r.Dx()/12)) }
 	box := func(x, y, x2, y2 int) { l(x, y, x2, y); l(x2, y, x2, y2); l(x2, y2, x, y2); l(x, y2, x, y) }
 	switch name {
+	case "pause":
+		l(7, 4, 7, 16)
+		l(13, 4, 13, 16)
 	case "rect":
 		box(3, 4, 17, 16)
 	case "ellipse":

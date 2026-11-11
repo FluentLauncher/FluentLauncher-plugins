@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"image"
+	"image/color"
 	"image/draw"
 	"sort"
 )
@@ -90,15 +91,31 @@ func (s *stitcher) thumbnail(maxWidth, maxHeight int) *image.RGBA {
 	factor := min(1, float64(maxWidth)/float64(w), float64(maxHeight)/float64(h))
 	out := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(w)*factor)), max(1, int(float64(h)*factor))))
 	partIndex, start := 0, 0
-	for y := 0; y < out.Rect.Dy(); y++ {
-		sy := y * h / out.Rect.Dy()
-		for partIndex < len(s.parts)-1 && sy >= start+s.parts[partIndex].end-s.parts[partIndex].start {
+	rowAt := func(y int) (*image.RGBA, int) {
+		for partIndex < len(s.parts)-1 && y >= start+s.parts[partIndex].end-s.parts[partIndex].start {
 			start += s.parts[partIndex].end - s.parts[partIndex].start
 			partIndex++
 		}
 		part := s.parts[partIndex]
+		return part.img, part.img.Rect.Min.Y + part.start + y - start
+	}
+	for y := 0; y < out.Rect.Dy(); y++ {
+		fy := max(0, min(float64(h-1), (float64(y)+0.5)*float64(h)/float64(out.Rect.Dy())-0.5))
+		y0 := int(fy)
+		ty := fy - float64(y0)
+		a, ay := rowAt(y0)
+		b, by := rowAt(min(y0+1, h-1))
 		for x := 0; x < out.Rect.Dx(); x++ {
-			out.SetRGBA(x, y, part.img.RGBAAt(part.img.Rect.Min.X+x*w/out.Rect.Dx(), part.img.Rect.Min.Y+part.start+sy-start))
+			fx := max(0, min(float64(w-1), (float64(x)+0.5)*float64(w)/float64(out.Rect.Dx())-0.5))
+			x0 := int(fx)
+			x1 := min(x0+1, w-1)
+			tx := fx - float64(x0)
+			c00, c10 := a.RGBAAt(a.Rect.Min.X+x0, ay), a.RGBAAt(a.Rect.Min.X+x1, ay)
+			c01, c11 := b.RGBAAt(b.Rect.Min.X+x0, by), b.RGBAAt(b.Rect.Min.X+x1, by)
+			blend := func(v00, v10, v01, v11 uint8) uint8 {
+				return uint8(((float64(v00)*(1-tx)+float64(v10)*tx)*(1-ty) + (float64(v01)*(1-tx)+float64(v11)*tx)*ty) + 0.5)
+			}
+			out.SetRGBA(x, y, color.RGBA{blend(c00.R, c10.R, c01.R, c11.R), blend(c00.G, c10.G, c01.G, c11.G), blend(c00.B, c10.B, c01.B, c11.B), 255})
 		}
 	}
 	return out

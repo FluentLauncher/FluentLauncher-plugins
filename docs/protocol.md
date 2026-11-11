@@ -79,3 +79,11 @@ SDK 仅在实现该接口时，在 initialize 的 `capabilities` 数组声明 `e
 命令 ID 在插件升级中保持稳定。宿主按需启动进程，遵守禁用、暂停、进程上限与更新替换状态；同一命令执行期间忽略重复触发。交互/延时工作须立即返回，完成操作放在插件后台，避免 RPC 超时。现有结果动作仍使用 execute(resultId, actionId)。
 
 此扩展需要发布包含 CommandHandler 的 SDK 标签后，第三方项目再升级依赖。模板当前只用 showQuery，继续兼容已发布的 SDK。
+
+## 交互任务的活动状态
+
+SDK 可选实现 `ActivityHandler.HasActivity(context.Context) (bool, error)`，初始化时自动声明 `activity` 能力。宿主在准备空闲回收前发送 `activity` RPC，响应为 `{"active":true}` 或 `{"active":false}`。
+
+选区、倒计时、贴图窗口（包括隐藏的贴图）等仍存在时返回 true，宿主延后一个空闲周期再检查；无活动返回 false 后回收。不声明此能力的旧插件沿用原行为。检查失败或超时不会无限保活；禁用、卸载、升级、主动停止和宿主退出仍终止进程，且活动插件仍占用现有进程预算。无需主动发送通知，也不改变协议版本 1。
+
+对于采用异步任务的插件，`execute` / `executeCommand` 仅表示任务已接受，不能等待整个交互；异步失败需要由插件自己的界面给出反馈。截图插件的当前版本需要同步更新宿主才能保证长期贴图存活。

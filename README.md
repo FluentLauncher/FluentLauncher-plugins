@@ -10,6 +10,7 @@
 | `plugins/echo/` | 最小查询与复制示例 |
 | `plugins/devtools/` | 多关键词、文本工具、多个结果与单元测试 |
 | `plugins/clipboard/` | Windows API、内存状态与并发示例 |
+| `plugins/screenshot/` | 区域 / 全屏截图、原地贴图、方向键微调；[使用与验证](docs/screenshot.md) |
 | `templates/go-plugin/` | 第三方插件项目模板 |
 | `catalog.source.json` | 官方插件的 ID、三语名称与简介 |
 | `tools/package/` | 从 manifest 构建 ZIP、生成目录并签名 |
@@ -50,7 +51,7 @@ Pop-Location
 - 本仓库与启动器仓库 Repository variable：`FLUENTLAUNCHER_PLUGIN_PUBLIC_KEY`，填写同一个公钥。
 - 启动器 Repository variable：`FLUENTLAUNCHER_PLUGIN_REPOSITORY`，填写本仓库的 `owner/name`。
 
-推送 `v1.0.0` 标签后，Actions 验证源码、构建三个独立 ZIP 和 `catalog.json` / `catalog.sig`，全部上传草稿后才公开 Release。签名覆盖目录原始字节的 SHA-256，目录记录每个 ZIP 的固定版本 URL、大小及 SHA-256。
+推送 `v1.0.0` 标签后，Actions 验证源码、按目录清单构建独立 ZIP 和 `catalog.json` / `catalog.sig`，全部上传草稿后才公开 Release。签名覆盖目录原始字节的 SHA-256，目录记录每个 ZIP 的固定版本 URL、大小及 SHA-256。
 
 目录刷新只下载元数据；点击安装才下载可执行文件。私钥不要提交、不要与主程序更新私钥混用；备份原密钥，后续版本持续使用。
 

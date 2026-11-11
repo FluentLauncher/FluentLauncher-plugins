@@ -123,6 +123,17 @@ type CommandHandler interface {
 	ExecuteCommand(context.Context, ExecuteCommandRequest) error
 }
 
+// ActivityHandler keeps interactive work alive across short execute RPCs.
+// Return true while a capture, dialog, or image window (even hidden) exists.
+// The host polls only before idle recycling; explicit stop still terminates it.
+type ActivityHandler interface {
+	HasActivity(context.Context) (bool, error)
+}
+
+type ActivityResult struct {
+	Active bool `json:"active"`
+}
+
 // Handler is what a plugin implements.
 type Handler interface {
 	// Query returns the results for one search. It runs on its own goroutine
@@ -311,9 +322,19 @@ func (s *server) handle(ctx context.Context, req request) (any, error) {
 	case "initialize":
 		result := InitializeResult{ProtocolVersion: ProtocolVersion, PluginID: s.pluginID}
 		if _, ok := s.handler.(CommandHandler); ok {
-			result.Capabilities = []string{"executeCommand"}
+			result.Capabilities = append(result.Capabilities, "executeCommand")
+		}
+		if _, ok := s.handler.(ActivityHandler); ok {
+			result.Capabilities = append(result.Capabilities, "activity")
 		}
 		return result, nil
+	case "activity":
+		handler, ok := s.handler.(ActivityHandler)
+		if !ok {
+			return nil, errors.New("插件未实现 activity")
+		}
+		active, err := handler.HasActivity(ctx)
+		return ActivityResult{Active: active}, err
 	case "ping":
 		return "pong", nil
 	case "query":

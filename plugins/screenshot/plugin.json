@@ -1,0 +1,17 @@
+{
+  "id": "official.screenshot",
+  "name": "截图与贴图",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "executable": "screenshot.exe",
+  "keywords": ["截图", "screenshot", "snap", "截屏"],
+  "permissions": [],
+  "description": "区域与全屏截图、原地置顶贴图、键盘微调；仅主动触发时捕获，不上传，贴图仅内存。需要支持 activity 能力的新版宿主以保留贴图。",
+  "commands": [
+    {"id": "region", "title": "区域截图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+A"]},
+    {"id": "region-pin", "title": "区域截图并原地贴图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+P"]},
+    {"id": "screen", "title": "当前显示器截图", "scope": "global", "activation": "invoke"},
+    {"id": "show", "title": "显示全部贴图", "scope": "global", "activation": "invoke"},
+    {"id": "hide", "title": "隐藏全部贴图", "scope": "global", "activation": "invoke"}
+  ]
+}

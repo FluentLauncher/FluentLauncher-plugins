@@ -37,5 +37,18 @@
       "en": "Remembers copied text in memory only (50 items, cleared on exit); search and press Enter to copy.",
       "zh-Hant": "記錄複製過的文字：僅限記憶體、最多 50 條、離開即清空，搜尋後按 Enter 複製。"
     }
+  },
+  {
+    "id": "official.screenshot",
+    "name": {
+      "zh-Hans": "截图与贴图",
+      "en": "Screenshot & Pin",
+      "zh-Hant": "截圖與貼圖"
+    },
+    "summary": {
+      "zh-Hans": "区域与全屏截图、原地置顶贴图、方向键微调。默认包含贴图再次截图；只主动捕获，不上传、不保留历史。",
+      "en": "Region and screen capture with in-place pinned images and pixel nudging. Pins remain in later captures by default. Explicit capture only; no uploads or history.",
+      "zh-Hant": "區域與全螢幕截圖、原位置頂貼圖、方向鍵微調。預設包含貼圖再次截圖；僅主動擷取，不上傳、不保留歷史。"
+    }
   }
 ]

@@ -12,31 +12,19 @@ func (s *scrollWindow) showPreview() {
 	s.hover = -1
 	s.focus = 0
 	s.offset = 0
-	monitor := currentMonitor(s.region.Min.Add(s.region.Size().Div(2)))
-	scale := uiScale(s.hwnd)
-	w := min(max(s.region.Dx()+px(24, scale), px(560, scale)), monitor.Dx()*4/5)
-	h := min(max(px(360, scale), s.result.Rect.Dy()+px(104, scale)), monitor.Dy()*4/5)
-	pos := monitor.Min.Add(image.Pt((monitor.Dx()-w)/2, (monitor.Dy()-h)/2))
-	s.bounds = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
-	windowAt(s.hwnd, s.bounds, true)
-	call(user32, "SetForegroundWindow", s.hwnd)
-	call(user32, "SetFocus", s.hwnd)
 	invalidate(s.hwnd)
 }
 
 func (s *scrollWindow) buttons() []image.Rectangle {
 	scale := uiScale(s.hwnd)
-	pad, gap, h := px(8, scale), px(5, scale), px(34, scale)
-	count := 4
+	pad, gap, h := px(6, scale), px(4, scale), px(28, scale)
+	count := 3
 	if s.preview {
 		count = 5
 	}
 	w := (s.bounds.Dx() - pad*2 - gap*(count-1)) / count
 	result := make([]image.Rectangle, count)
 	y := pad
-	if !s.preview {
-		y = px(60, scale)
-	}
 	for i := range result {
 		x := pad + i*(w+gap)
 		result[i] = image.Rect(x, y, x+w, y+h)
@@ -46,7 +34,7 @@ func (s *scrollWindow) buttons() []image.Rectangle {
 
 func (s *scrollWindow) view() image.Rectangle {
 	scale := uiScale(s.hwnd)
-	return image.Rect(px(12, scale), px(52, scale), s.bounds.Dx()-px(22, scale), s.bounds.Dy()-px(44, scale))
+	return image.Rect(px(10, scale), px(64, scale), s.bounds.Dx()-px(20, scale), s.bounds.Dy()-px(30, scale))
 }
 
 func (s *scrollWindow) visibleRows() int {
@@ -90,10 +78,7 @@ func (s *scrollWindow) dragScrollbar(point image.Point) {
 }
 
 func (s *scrollWindow) paint() {
-	var ps paintStruct
-	dc := call(user32, "BeginPaint", s.hwnd, ptr(&ps))
-	defer call(user32, "EndPaint", s.hwnd, ptr(&ps))
-	s.draw(dc)
+	s.paintBuffer.paint(s.hwnd, s.bounds.Size(), s.draw)
 }
 
 func (s *scrollWindow) draw(dc uintptr) {
@@ -101,23 +86,23 @@ func (s *scrollWindow) draw(dc uintptr) {
 	r := image.Rect(0, 0, s.bounds.Dx(), s.bounds.Dy())
 	fill(dc, r, rgbRef(t.Background))
 	roundPanel(dc, r, px(int(t.Radius), scale), t.Background, t.Border)
-	labels := []string{"切换手动", "采集", "完成", "取消"}
-	if !s.auto {
-		labels[0] = "继续自动"
+	labels := []string{"暂停", "完成", "取消"}
+	if s.paused.Load() {
+		labels[0] = "继续"
 	}
 	if s.preview {
-		labels = []string{"复制", "保存", "贴图", "继续采集", "关闭"}
+		labels = []string{"复制", "保存", "贴图", "继续", "关闭"}
 	}
 	for i, r := range s.buttons() {
 		bg, fg := t.Surface, t.Text
-		disabled := s.busy || (!s.preview && i == 1 && s.auto)
-		if !s.preview && s.finishRequested.Load() && i != 3 {
+		disabled := s.busy
+		if !s.preview && s.finishRequested.Load() && i != 2 {
 			disabled = true
 		}
 		if i == s.hover && !disabled {
 			bg = t.SurfaceHover
 		}
-		primary := 2
+		primary := 1
 		if s.preview {
 			primary = 0
 		}
@@ -134,17 +119,25 @@ func (s *scrollWindow) draw(dc uintptr) {
 			frame(dc, r.Inset(px(2, scale)), t.Accent, 1)
 		}
 	}
+	textAligned(dc, s.progressText(), image.Rect(px(10, scale), px(36, scale), s.bounds.Dx()-px(8, scale), px(60, scale)), rgbRef(t.Text), false)
 	if !s.preview {
+		view := s.view()
+		if s.thumbnail != nil {
+			factor := min(1, float64(view.Dx())/float64(s.thumbnail.width), float64(view.Dy())/float64(s.thumbnail.height))
+			size := image.Pt(max(1, int(float64(s.thumbnail.width)*factor)), max(1, int(float64(s.thumbnail.height)*factor)))
+			pos := view.Min.Add(image.Pt((view.Dx()-size.X)/2, 0))
+			s.thumbnail.draw(dc, image.Rectangle{Min: pos, Max: pos.Add(size)}, image.Rect(0, 0, s.thumbnail.width, s.thumbnail.height))
+		} else {
+			text(dc, "正在准备预览…", view, rgbRef(t.TextMuted))
+		}
 		status := s.status
+		if s.paused.Load() {
+			status = "已暂停 · 点继续后滚动页面"
+		}
 		if s.finishRequested.Load() {
-			status = "正在生成完整预览，仍可取消"
+			status = "正在生成完整图片…"
 		}
-		mode := "手动"
-		if s.auto {
-			mode = "自动"
-		}
-		textAligned(dc, "长截图 · "+mode+" · "+s.progressText(), image.Rect(px(12, scale), px(4, scale), s.bounds.Dx()-px(8, scale), px(30, scale)), rgbRef(t.Text), false)
-		textAligned(dc, status, image.Rect(px(12, scale), px(30, scale), s.bounds.Dx()-px(8, scale), px(54, scale)), rgbRef(t.TextMuted), false)
+		textAligned(dc, status, image.Rect(px(8, scale), s.bounds.Dy()-px(26, scale), s.bounds.Dx()-px(6, scale), s.bounds.Dy()-px(3, scale)), rgbRef(t.TextMuted), false)
 		return
 	}
 	view := s.view()
@@ -160,14 +153,16 @@ func (s *scrollWindow) draw(dc uintptr) {
 	if rows < s.result.Rect.Dy() {
 		roundPanel(dc, thumb, px(3, scale), t.Accent, t.Accent)
 	}
-	y := s.bounds.Dy() - px(38, scale)
-	info := fmt.Sprintf("%d × %d · %d 帧 · 滚轮 / PgUp / PgDn 查看", s.result.Rect.Dx(), s.result.Rect.Dy(), s.frames)
-	textAligned(dc, info, image.Rect(px(12, scale), y, s.bounds.Dx()-px(8, scale), y+px(20, scale)), rgbRef(t.Text), false)
+	y := s.bounds.Dy() - px(26, scale)
+	info := fmt.Sprintf("%d × %d · 滚轮查看", s.result.Rect.Dx(), s.result.Rect.Dy())
 	status := s.status
 	if s.busy {
 		status = "正在输出完整分辨率图片…"
 	}
-	textAligned(dc, status, image.Rect(px(12, scale), y+px(19, scale), s.bounds.Dx()-px(8, scale), s.bounds.Dy()-px(2, scale)), rgbRef(t.TextMuted), false)
+	if !s.busy {
+		status = info
+	}
+	textAligned(dc, status, image.Rect(px(8, scale), y, s.bounds.Dx()-px(6, scale), s.bounds.Dy()-px(3, scale)), rgbRef(t.TextMuted), false)
 }
 
 func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
@@ -177,6 +172,9 @@ func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 	case wmPaint:
 		s.paint()
 		return 0
+	case 0x0318: // WM_PRINTCLIENT: render a complete client for native QA.
+		s.draw(wparam)
+		return 0
 	case wmClose:
 		if !s.busy {
 			s.close(true)
@@ -184,6 +182,7 @@ func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		return 0
 	case wmMouseMove:
 		p := mousePoint(lparam)
+		previous := s.hover
 		s.hover = -1
 		for i, r := range s.buttons() {
 			if p.In(r) {
@@ -192,7 +191,7 @@ func (s *scrollWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		if s.dragScroll && s.preview {
 			s.dragScrollbar(p)
-		} else {
+		} else if previous != s.hover {
 			invalidate(s.hwnd)
 		}
 		return 0
@@ -293,21 +292,16 @@ func (s *scrollWindow) activate(index int) {
 		return
 	}
 	if !s.preview {
-		if s.finishRequested.Load() && index != 3 {
+		if s.finishRequested.Load() && index != 2 {
 			return
 		}
 		switch index {
 		case 0:
-			s.auto = !s.auto
-			s.send(scrollAction{kind: "mode", auto: s.auto})
+			s.paused.Store(!s.paused.Load())
 		case 1:
-			if !s.auto {
-				s.send(scrollAction{kind: "capture"})
-			}
-		case 2:
 			s.finishRequested.Store(true)
 			s.cancel()
-		case 3:
+		case 2:
 			s.close(true)
 		}
 		invalidate(s.hwnd)

@@ -11,76 +11,48 @@ import (
 	"time"
 )
 
-type scrollAction struct {
-	kind string
-	auto bool
-}
-
 type longSeed struct {
 	first *image.RGBA
 	marks []annotation
 }
 
 type scrollWindow struct {
-	d                            *desktop
-	hwnd, target, root           uintptr
-	region, bounds, rootBounds   image.Rectangle
-	ctx                          context.Context
-	cancel                       context.CancelFunc
-	discard                      atomic.Bool
-	finishRequested              atomic.Bool
-	actions                      chan scrollAction
-	preview, auto, busy          bool
-	status                       string
-	frames, height               int
-	result, rawResult, lastFrame *image.RGBA
-	bitmap                       *bitmap
-	offset                       int
-	hover, focus                 int
-	dragScroll                   bool
-	marks                        []annotation
-
-	capturePinsHidden, captureUIHidden, themeDeferred bool
-}
-
-func scrollTarget(region image.Rectangle) (uintptr, uintptr, image.Rectangle, error) {
-	center := region.Min.Add(region.Size().Div(2))
-	for _, delta := range []image.Point{{}, image.Pt(-region.Dx()/4, 0), image.Pt(region.Dx()/4, 0), image.Pt(0, -region.Dy()/4)} {
-		p := center.Add(delta)
-		packed := uintptr(uint64(uint32(p.X)) | uint64(uint32(p.Y))<<32)
-		hwnd := call(user32, "WindowFromPoint", packed)
-		var pid uint32
-		call(user32, "GetWindowThreadProcessId", hwnd, ptr(&pid))
-		if hwnd == 0 || pid == uint32(call(kernel32, "GetCurrentProcessId")) {
-			continue
-		}
-		root := call(user32, "GetAncestor", hwnd, 2)
-		var r rect
-		if call(user32, "GetWindowRect", root, ptr(&r)) == 0 {
-			continue
-		}
-		if !region.In(r.image()) {
-			return 0, 0, image.Rectangle{}, errors.New("长截图选区应位于同一个窗口内，请只选择可滚动的内容")
-		}
-		return hwnd, root, r.image(), nil
-	}
-	return 0, 0, image.Rectangle{}, errors.New("没有找到可滚动的目标窗口，请将选区放在页面内容中，避开贴图和操作窗口")
+	d                                *desktop
+	hwnd                             uintptr
+	region, bounds                   image.Rectangle
+	ctx                              context.Context
+	cancel                           context.CancelFunc
+	discard, finishRequested, paused atomic.Bool
+	preview, busy                    bool
+	status                           string
+	frames, height                   int
+	result, rawResult, lastFrame     *image.RGBA
+	bitmap, thumbnail                *bitmap
+	paintBuffer                      paintBuffer
+	offset, hover, focus             int
+	dragScroll                       bool
+	marks                            []annotation
+	capturePinsHidden, themeDeferred bool
+	excludedFromCapture              bool
 }
 
 func longPanelBounds(region, monitor image.Rectangle, size image.Point, gap int) image.Rectangle {
+	size.X = min(size.X, monitor.Dx())
+	size.Y = min(size.Y, monitor.Dy())
 	x := max(monitor.Min.X, min(region.Min.X, monitor.Max.X-size.X))
-	candidates := []image.Point{image.Pt(x, region.Min.Y-gap-size.Y), image.Pt(x, region.Max.Y+gap), image.Pt(region.Max.X+gap, region.Min.Y), image.Pt(region.Min.X-gap-size.X, region.Min.Y)}
+	y := max(monitor.Min.Y, min(region.Min.Y, monitor.Max.Y-size.Y))
+	candidates := []image.Point{image.Pt(region.Max.X+gap, y), image.Pt(region.Min.X-gap-size.X, y), image.Pt(x, region.Min.Y-gap-size.Y), image.Pt(x, region.Max.Y+gap)}
 	for _, p := range candidates {
 		r := image.Rectangle{Min: p, Max: p.Add(size)}
 		if r.In(monitor) && !r.Overlaps(region) {
 			return r
 		}
 	}
-	p := image.Pt(max(monitor.Min.X, monitor.Max.X-size.X-gap), max(monitor.Min.Y, monitor.Max.Y-size.Y-gap))
+	p := image.Pt(max(monitor.Min.X, monitor.Max.X-size.X-gap), y)
 	return image.Rectangle{Min: p, Max: p.Add(size)}
 }
 
-func (d *desktop) startLongCapture(region image.Rectangle, auto bool, scale float64, seeds ...longSeed) {
+func (d *desktop) startLongCapture(region image.Rectangle, scale float64, seeds ...longSeed) {
 	if region.Dx() < 64 || region.Dy() < 96 {
 		d.report(d.controller, errors.New("长截图选区至少需要 64×96 像素，请重新选择内容区域"))
 		return
@@ -89,35 +61,38 @@ func (d *desktop) startLongCapture(region image.Rectangle, auto bool, scale floa
 		d.report(d.controller, errLongLimit)
 		return
 	}
-	target, root, rootBounds, err := scrollTarget(region)
-	if err != nil {
-		d.report(d.controller, err)
-		return
-	}
-	d.openLongCapture(region, auto, scale, target, root, rootBounds, seeds...)
+	// Manual screen stitching does not drive a target HWND. Window chrome,
+	// child HWNDs and invisible resize borders must not reject a screen crop.
+	d.openLongCapture(region, scale, seeds...)
 }
 
-func (d *desktop) openLongCapture(region image.Rectangle, auto bool, scale float64, target, root uintptr, rootBounds image.Rectangle, seeds ...longSeed) {
+func (d *desktop) openLongCapture(region image.Rectangle, scale float64, seeds ...longSeed) {
 	monitor := currentMonitor(region.Min.Add(region.Size().Div(2)))
-	size := image.Pt(min(px(520, scale), monitor.Dx()-16), px(104, scale))
-	bounds := longPanelBounds(region, monitor, size, px(8, scale))
-	s := &scrollWindow{d: d, target: target, root: root, rootBounds: rootBounds, region: region, bounds: bounds, auto: auto, actions: make(chan scrollAction, 8), hover: -1, status: "正在准备首帧…"}
-	s.hwnd = d.createWindow("FLScreenshotLong", "滚动长截图", wsExTopmost|wsExToolwindow, d.controller, bounds)
+	size := image.Pt(min(px(280, scale), monitor.Dx()), min(px(420, scale), monitor.Dy()))
+	bounds := longPanelBounds(region, monitor, size, px(10, scale))
+	s := &scrollWindow{d: d, region: region, bounds: bounds, hover: -1, status: "滚动页面，内容会自动拼接"}
+	s.hwnd = d.createWindow("FLScreenshotLong", "长截图预览", wsExTopmost|wsExToolwindow, d.controller, bounds)
 	if s.hwnd == 0 {
-		d.report(d.controller, errors.New("无法创建长截图控制条"))
+		d.report(d.controller, errors.New("无法创建长截图预览"))
+		return
+	}
+	// Exclude the preview instead of blinking it off for every sample.
+	s.excludedFromCapture = call(user32, "SetWindowDisplayAffinity", s.hwnd, 0x11) != 0
+	if bounds.Overlaps(region) && !s.excludedFromCapture {
+		call(user32, "DestroyWindow", s.hwnd)
+		d.report(d.controller, errors.New("系统无法排除预览窗口，请缩小选区，给预览留出旁边的位置"))
 		return
 	}
 	d.scrolling = s
 	d.capturing.Store(true)
 	d.active.Add(1)
-	windowAt(s.hwnd, bounds, false)
-	call(user32, "SetForegroundWindow", root)
 	var seed *stitcher
 	if len(seeds) > 0 {
 		seed = newStitcher(seeds[0].first)
 		s.marks = seeds[0].marks
 	}
-	s.startWorker(auto, seed)
+	windowAt(s.hwnd, bounds, false)
+	s.startWorker(seed)
 }
 
 func (s *scrollWindow) close(discard bool) {
@@ -136,61 +111,45 @@ func (s *scrollWindow) close(discard bool) {
 	call(user32, "DestroyWindow", s.hwnd)
 	s.bitmap.close()
 	s.bitmap = nil
+	s.thumbnail.close()
+	s.thumbnail = nil
+	s.paintBuffer.close()
 	s.d.active.Add(-1)
 	s.d.capturing.Store(false)
 }
 
-func (s *scrollWindow) startWorker(auto bool, seed *stitcher) {
+func (s *scrollWindow) startWorker(seed *stitcher) {
 	s.preview = false
 	s.finishRequested.Store(false)
-	s.auto = auto
+	s.paused.Store(false)
 	s.hover = -1
-	s.actions = make(chan scrollAction, 8)
 	s.ctx, s.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+	// Hide excluded pins once for the session, restoring on finish/cancel.
+	if !s.d.preferences.IncludePins {
+		s.capturePinsHidden = true
+		for _, p := range s.d.pins {
+			call(user32, "ShowWindow", p.hwnd, 0)
+			call(user32, "ShowWindow", p.shadow, 0)
+		}
+	}
 	s.d.active.Add(1)
-	go s.collect(s.ctx, auto, seed)
+	go s.collect(s.ctx, seed)
 }
 
-func (s *scrollWindow) updateProgress(builder *stitcher, auto bool, status string) {
-	frames, height := builder.frames, builder.height
-	_ = s.d.post(func() {
-		if s.d.scrolling != s || s.preview {
-			return
-		}
-		s.auto = auto
-		s.frames = frames
-		s.height = height
-		s.status = status
-		invalidate(s.hwnd)
-	})
-}
-
-func (s *scrollWindow) targetValid() bool {
-	if call(user32, "IsWindow", s.root) == 0 || call(user32, "IsWindowVisible", s.root) == 0 || call(user32, "IsIconic", s.root) != 0 {
-		return false
-	}
-	var r rect
-	if call(user32, "GetWindowRect", s.root, ptr(&r)) == 0 || r.image() != s.rootBounds {
-		return false
-	}
-	ownPID := uint32(call(kernel32, "GetCurrentProcessId"))
-	var rootPID uint32
-	call(user32, "GetWindowThreadProcessId", s.root, ptr(&rootPID))
-	foreground := call(user32, "GetForegroundWindow")
-	var pid uint32
-	call(user32, "GetWindowThreadProcessId", foreground, ptr(&pid))
-	if rootPID != ownPID && foreground != 0 && pid != ownPID && call(user32, "GetAncestor", foreground, 2) != s.root {
-		return false
-	}
-	for _, p := range []image.Point{s.region.Min.Add(image.Pt(3, 3)), s.region.Max.Sub(image.Pt(4, 4)), s.region.Min.Add(s.region.Size().Div(2))} {
-		packed := uintptr(uint64(uint32(p.X)) | uint64(uint32(p.Y))<<32)
-		hwnd := call(user32, "WindowFromPoint", packed)
-		call(user32, "GetWindowThreadProcessId", hwnd, ptr(&pid))
-		if rootPID != ownPID && hwnd != 0 && pid != ownPID && call(user32, "GetAncestor", hwnd, 2) != s.root {
-			return false
+func (s *scrollWindow) restoreCaptureUI() {
+	if s.capturePinsHidden {
+		s.capturePinsHidden = false
+		for _, hwnd := range s.d.pinOrder {
+			p := s.d.pins[hwnd]
+			if !p.state.Hidden {
+				p.syncWindow()
+			}
 		}
 	}
-	return true
+	if s.themeDeferred {
+		s.themeDeferred = false
+		s.d.applyTheme(s.d.theme)
+	}
 }
 
 func waitScroll(ctx context.Context, duration time.Duration) bool {
@@ -205,226 +164,93 @@ func waitScroll(ctx context.Context, duration time.Duration) bool {
 }
 
 func (s *scrollWindow) capture(ctx context.Context) (*image.RGBA, error) {
-	if !s.targetValid() {
-		return nil, errors.New("目标窗口已关闭、移动或被其他应用遮挡，已停止采集并保留进度")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	defer func() { _ = s.d.post(s.restoreCaptureUI) }()
-	type visibility struct{ valid, hidden bool }
-	ack := make(chan visibility, 1)
-	if err := s.d.post(func() {
-		if s.d.scrolling != s || s.preview {
-			ack <- visibility{}
-			return
-		}
-		s.d.closeMenu()
-		overlaps := s.bounds.Overlaps(s.region)
-		if overlaps {
-			call(user32, "ShowWindow", s.hwnd, 0)
-		}
-		hidePins := !s.d.preferences.IncludePins
-		s.capturePinsHidden = hidePins
-		s.captureUIHidden = overlaps || hidePins
-		if hidePins {
-			for _, p := range s.d.pins {
-				call(user32, "ShowWindow", p.hwnd, 0)
-				call(user32, "ShowWindow", p.shadow, 0)
-			}
-		}
-		ack <- visibility{true, overlaps || hidePins}
-	}); err != nil {
-		return nil, err
-	}
-	var state visibility
-	select {
-	case state = <-ack:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if !state.valid {
-		return nil, context.Canceled
-	}
-	if state.hidden && !waitScroll(ctx, 40*time.Millisecond) {
-		return nil, ctx.Err()
-	}
-	call(dwmapi, "DwmFlush")
 	if s.d.captureLong != nil {
 		return s.d.captureLong(s.region)
 	}
 	return captureScreen(s.region)
 }
 
-// GUI-thread only, including cancellation: hidden pins must be restored even
-// when the worker stops between the visibility request and its acknowledgement.
-func (s *scrollWindow) restoreCaptureUI() {
-	if s.capturePinsHidden {
-		for _, hwnd := range s.d.pinOrder {
-			p := s.d.pins[hwnd]
-			if !p.state.Hidden {
-				call(user32, "ShowWindow", p.hwnd, 4)
-				if p.state.Shadow {
-					call(user32, "ShowWindow", p.shadow, 4)
-				}
-			}
+func (s *scrollWindow) updateLive(builder *stitcher, status string) {
+	img := builder.thumbnail(280, 1400)
+	factor := float64(img.Rect.Dx()) / float64(builder.last.Rect.Dx())
+	marks := make([]annotation, len(s.marks))
+	for i, m := range s.marks {
+		marks[i] = m
+		marks[i].points = make([]image.Point, len(m.points))
+		marks[i].width = max(1, int(float64(m.width)*factor))
+		for j, p := range m.points {
+			marks[i].points[j] = image.Pt(int(float64(p.X)*factor), int(float64(p.Y)*factor))
 		}
 	}
-	s.capturePinsHidden = false
-	s.captureUIHidden = false
-	if s.themeDeferred {
-		s.themeDeferred = false
-		s.d.applyTheme(s.d.theme)
-	}
-	if s.d.scrolling == s && !s.preview {
-		windowAt(s.hwnd, s.bounds, false)
-	}
-}
-
-func (s *scrollWindow) stableCapture(ctx context.Context) (*image.RGBA, error) {
-	if !waitScroll(ctx, 180*time.Millisecond) {
-		return nil, ctx.Err()
-	}
-	last, err := s.capture(ctx)
+	img, err := renderAnnotations(img, marks)
 	if err != nil {
-		return nil, err
+		s.publishStatus(err.Error())
+		return
 	}
-	for i := 0; i < 8; i++ {
-		if !waitScroll(ctx, 90*time.Millisecond) {
-			return nil, ctx.Err()
-		}
-		next, err := s.capture(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if frameDifference(last, next) < 0.7 {
-			return next, nil
-		}
-		last = next
+	b, err := newBitmap(img)
+	if err != nil {
+		s.publishStatus(err.Error())
+		return
 	}
-	return last, nil
-}
-
-func (s *scrollWindow) wheel(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	ack := make(chan error, 1)
+	frames, height := builder.frames, builder.height
 	if err := s.d.post(func() {
-		if err := ctx.Err(); err != nil {
-			ack <- err
-			return
-		}
 		if s.d.scrolling != s || s.preview {
-			ack <- context.Canceled
+			b.close()
 			return
 		}
-		ack <- s.postWheel()
+		s.thumbnail.close()
+		s.thumbnail = b
+		s.frames = frames
+		s.height = height
+		s.status = status
+		invalidate(s.hwnd)
 	}); err != nil {
-		return err
-	}
-	select {
-	case err := <-ack:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
+		b.close()
 	}
 }
 
-func (s *scrollWindow) postWheel() error {
-	if !s.targetValid() {
-		return errors.New("目标窗口位置已变化，停止自动滚动")
-	}
-	point := s.region.Min.Add(s.region.Size().Div(2))
-	notches := 1
-	if s.region.Dy() > 500 {
-		notches = 2
-	}
-	if s.region.Dy() > 1000 {
-		notches = 3
-	}
-	delta := int16(-120 * notches)
-	wparam := uintptr(uint32(uint16(delta)) << 16)
-	lparam := uintptr(uint32(uint16(point.X)) | uint32(uint16(point.Y))<<16)
-	if call(user32, "PostMessageW", s.target, 0x020A, wparam, lparam) == 0 {
-		return errors.New("目标应用拒绝滚动消息，请切换手动滚动采集")
-	}
-	return nil
+func (s *scrollWindow) publishStatus(status string) {
+	_ = s.d.post(func() {
+		if s.d.scrolling == s && !s.preview && s.status != status {
+			s.status = status
+			invalidate(s.hwnd)
+		}
+	})
 }
 
-func (s *scrollWindow) collect(ctx context.Context, auto bool, builder *stitcher) {
+func (s *scrollWindow) collect(ctx context.Context, builder *stitcher) {
 	defer s.d.active.Add(-1)
 	if builder == nil {
-		first, err := s.stableCapture(ctx)
+		first, err := s.capture(ctx)
 		if err != nil {
 			s.failStart(err)
 			return
 		}
 		builder = newStitcher(first)
 	}
-	status := "手动向下滚动后点击“采集”"
-	if auto {
-		status = "正在自动滚动，随时可以完成或切换手动"
-	}
-	s.updateProgress(builder, auto, status)
-	unchanged := 0
-captureLoop:
+	s.updateLive(builder, "滚动页面，内容会自动拼接")
+	ticker := time.NewTicker(140 * time.Millisecond)
+	defer ticker.Stop()
+	var pending *image.RGBA
+	status := "采集完成"
+collection:
 	for {
-		var tick <-chan time.Time
-		var timer *time.Timer
-		if auto {
-			timer = time.NewTimer(160 * time.Millisecond)
-			tick = timer.C
-		}
-		capture, scroll := false, false
 		select {
 		case <-ctx.Done():
-			status = "采集已结束，保留已捕获内容"
-			if s.finishRequested.Load() {
-				status = "采集完成"
-			}
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				status = "达到 2 分钟上限，已保留当前结果"
 			}
-			if timer != nil {
-				timer.Stop()
-			}
-			break captureLoop
-		case action := <-s.actions:
-			switch action.kind {
-			case "mode":
-				auto = action.auto
-				unchanged = 0
-				s.updateProgress(builder, auto, "模式已切换；手动滚动后点击采集")
-			case "capture":
-				capture = true
-			}
-		case <-tick:
-			capture, scroll = true, true
+			break collection
+		case <-ticker.C:
 		}
-		if timer != nil {
-			timer.Stop()
-		}
-		if !capture {
+		if s.paused.Load() {
+			pending = nil
 			continue
 		}
-		if ctx.Err() != nil {
-			continue
-		}
-		if scroll {
-			if err := s.wheel(ctx); err != nil {
-				if ctx.Err() != nil {
-					continue
-				}
-				auto = false
-				s.updateProgress(builder, false, err.Error())
-				continue
-			}
-		}
-		frame, err := s.stableCapture(ctx)
+		frame, err := s.capture(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				continue
@@ -432,35 +258,51 @@ captureLoop:
 			status = err.Error()
 			break
 		}
+		if s.paused.Load() {
+			pending = nil
+			continue
+		}
+		// Wait for two settled samples instead of stitching animation frames.
+		// A still page stays live until the user chooses Finish.
+		if pending == nil || frameDifference(pending, frame) >= 0.7 {
+			pending = frame
+			continue
+		}
+		pending = nil
 		added, err := builder.add(frame)
 		if errors.Is(err, errLongLimit) {
 			status = err.Error()
 			break
 		}
 		if err != nil {
-			auto = false
-			s.updateProgress(builder, false, "自动已暂停。"+err.Error())
+			s.publishStatus("未拼接：请慢慢滚动，或回滚一些再试")
 			continue
 		}
 		if !added {
-			unchanged++
-			if auto && unchanged >= 2 {
-				if builder.frames == 1 {
-					auto = false
-					s.updateProgress(builder, false, "未检测到滚动，请手动滚动后采集，或完成当前单屏")
-				} else {
-					status = "画面不再移动，已结束；请检查末尾，必要时可继续采集"
-					break
-				}
-			}
 			continue
 		}
-		unchanged = 0
-		s.updateProgress(builder, auto, "已拼接；可随时完成，匹配不可靠时会暂停")
+		s.updateLive(builder, "已拼接 · 继续滚动页面，完成后点完成")
 		if builder.frames >= 80 {
 			status = "达到 80 帧上限，已保留当前结果"
 			break
 		}
+	}
+	if s.discard.Load() {
+		return
+	}
+	// Include the last settled viewport even if Finish was clicked between two
+	// polling ticks. Cancellation/close still discards without further sampling.
+	if s.finishRequested.Load() && builder.frames < 80 {
+		finalCtx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+		last, err := s.capture(finalCtx)
+		if err == nil && waitScroll(finalCtx, 90*time.Millisecond) && !s.discard.Load() {
+			if next, err := s.capture(finalCtx); err == nil && frameDifference(last, next) < 0.7 {
+				if _, err := builder.add(next); err != nil {
+					status = "已保留结果，最后一屏未找到可靠重叠"
+				}
+			}
+		}
+		cancel()
 	}
 	if s.discard.Load() {
 		return
@@ -471,27 +313,29 @@ captureLoop:
 		s.failStart(err)
 		return
 	}
-	last := builder.last
-	frames := builder.frames
-	builder.parts = nil
-	bmp, err := newBitmap(img)
+	last, frames := builder.last, builder.frames
+	b, err := newBitmap(img)
 	if err != nil {
 		s.failStart(err)
 		return
 	}
 	if err := s.d.post(func() {
 		if s.d.scrolling != s || s.discard.Load() {
-			bmp.close()
+			b.close()
 			return
 		}
-		s.result, s.lastFrame, s.bitmap = img, last, bmp
+		s.bitmap.close()
+		s.bitmap = b
+		s.result = img
 		s.rawResult = raw
+		s.lastFrame = last
 		s.frames = frames
 		s.height = img.Rect.Dy()
 		s.status = status
+		s.restoreCaptureUI()
 		s.showPreview()
 	}); err != nil {
-		bmp.close()
+		b.close()
 	}
 }
 
@@ -506,13 +350,6 @@ func (s *scrollWindow) failStart(err error) {
 	})
 }
 
-func (s *scrollWindow) send(action scrollAction) {
-	select {
-	case s.actions <- action:
-	default:
-	}
-}
-
 func (s *scrollWindow) resume() {
 	if s.busy || !s.preview {
 		return
@@ -522,15 +359,10 @@ func (s *scrollWindow) resume() {
 		return
 	}
 	seed := &stitcher{parts: []imagePart{{s.rawResult, 0, s.rawResult.Rect.Dy()}}, last: s.lastFrame, origin: s.rawResult.Rect.Dy() - s.lastFrame.Rect.Dy(), height: s.rawResult.Rect.Dy(), frames: s.frames}
-	s.bitmap.close()
-	s.bitmap = nil
-	s.bounds = longPanelBounds(s.region, currentMonitor(s.region.Min), image.Pt(min(px(520, uiScale(s.hwnd)), currentMonitor(s.region.Min).Dx()-16), px(104, uiScale(s.hwnd))), px(8, uiScale(s.hwnd)))
-	windowAt(s.hwnd, s.bounds, false)
-	call(user32, "SetForegroundWindow", s.root)
-	s.startWorker(false, seed)
+	s.startWorker(seed)
 	invalidate(s.hwnd)
 }
 
 func (s *scrollWindow) progressText() string {
-	return fmt.Sprintf("%d 帧 · %d × %d 像素", s.frames, s.region.Dx(), s.height)
+	return fmt.Sprintf("%d 帧 · %d × %d", s.frames, s.region.Dx(), s.height)
 }

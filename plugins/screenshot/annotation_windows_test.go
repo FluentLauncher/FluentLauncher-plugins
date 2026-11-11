@@ -131,6 +131,20 @@ func TestNativeCaptureToolbarAndMaterial(t *testing.T) {
 	}
 	s.tool = ""
 	s.toolbarHover = -1
+	invalidate(s.hwnd)
+	call(user32, "UpdateWindow", s.hwnd)
+	selectionBuffer := s.paintBuffer.bitmap
+	if selectionBuffer == 0 {
+		t.Fatal("selection has no back buffer")
+	}
+	for _, r := range s.toolbarButtons() {
+		s.handle(wmMouseMove, 0, pos(r.Min.Add(image.Pt(2, 2))))
+		call(user32, "UpdateWindow", s.hwnd)
+	}
+	if s.paintBuffer.bitmap != selectionBuffer {
+		t.Fatal("toolbar hover recreated the full selection buffer")
+	}
+	s.toolbarHover = -1
 	s.handle(wmKeyDown, 0x09, 0)
 	if s.toolbarFocus < 0 {
 		t.Fatal("Tab did not focus the toolbar")

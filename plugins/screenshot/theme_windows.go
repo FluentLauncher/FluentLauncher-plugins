@@ -25,7 +25,7 @@ func (h handler) SetTheme(ctx context.Context, theme pluginsdk.Theme) error {
 
 func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 	d.theme = theme
-	if d.scrolling != nil && d.scrolling.captureUIHidden {
+	if d.scrolling != nil && d.scrolling.capturePinsHidden {
 		d.scrolling.themeDeferred = true
 		return
 	}

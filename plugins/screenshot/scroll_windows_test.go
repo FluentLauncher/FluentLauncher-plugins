@@ -195,28 +195,72 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.openLongCapture(region, true, uiScale(fixture), fixture, fixture, region, longSeed{first: frozenFirst, marks: marks})
+	// Exercise the real toolbar handoff. The source is another HWND in this
+	// process; manual screen stitching must not require a particular root HWND.
+	if err := d.openSelection(frozenFirst, region, false, previous); err != nil {
+		t.Fatal(err)
+	}
+	d.selection.selected = frozenFirst.Bounds()
+	d.selection.marks = marks
+	d.selection.activateTool(8)
 	if d.scrolling == nil {
 		t.Fatal("long capture not opened")
 	}
 	s := d.scrolling
-	deadline := time.Now().Add(25 * time.Second)
-	for !s.preview {
+	await := func(condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(4 * time.Second)
+		for !condition() {
+			pumpLongMessages()
+			if d.scrolling != s {
+				t.Fatal("session closed unexpectedly")
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("manual capture timed out: frames=%d height=%d status=%s", s.frames, s.height, s.status)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	await(func() bool { return s.thumbnail != nil && s.frames == 1 })
+	assertLongPreviewPixels(t, s)
+	originalBounds := s.bounds
+	// Leaving the page still never sends wheel messages or completes capture.
+	for end := time.Now().Add(400 * time.Millisecond); time.Now().Before(end); {
 		pumpLongMessages()
-		if d.scrolling != s {
-			var r rect
-			call(user32, "GetWindowRect", fixture, ptr(&r))
-			t.Logf("fixture visible=%d iconic=%d region=%v actual=%v rootExists=%d", call(user32, "IsWindowVisible", fixture), call(user32, "IsIconic", fixture), region, r.image(), call(user32, "IsWindow", fixture))
-			t.Fatal("long capture closed before preview")
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("long capture timed out: frames=%d status=%s", s.frames, s.status)
-		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if wheelCount < 3 || offset != content.Rect.Dy()-(height-header-footer) {
-		t.Fatalf("target not scrolled to bottom: %d wheels, offset=%d", wheelCount, offset)
+	if wheelCount != 0 || s.preview {
+		t.Fatal("plugin scrolled or completed without user input")
 	}
+	s.activate(0) // pause
+	call(user32, "SendMessageW", fixture, wmMouseWheel, uintptr(uint32(uint16(65416))<<16), 0)
+	for end := time.Now().Add(350 * time.Millisecond); time.Now().Before(end); {
+		pumpLongMessages()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.frames != 1 {
+		t.Fatal("paused capture accepted a frame")
+	}
+	s.activate(0)
+	await(func() bool { return s.height == height+offset })
+	userWheels := 1
+	for offset < content.Rect.Dy()-(height-header-footer) {
+		call(user32, "SendMessageW", fixture, wmMouseWheel, uintptr(uint32(uint16(65416))<<16), 0)
+		userWheels++
+		if offset < content.Rect.Dy()-(height-header-footer) {
+			await(func() bool { return s.height == height+offset })
+		}
+	}
+	if wheelCount != userWheels || s.preview {
+		t.Fatal("collection emitted input or finished without confirmation")
+	}
+	assertLongPreviewPixels(t, s)
+	s.activate(1) // finish, keeping the small window in place
+	await(func() bool { return s.preview })
+	if s.bounds != originalBounds {
+		t.Fatal("completion replaced the small preview with a large window")
+	}
+	assertLongPreviewPixels(t, s)
 	if s.result.Rect.Dy() != content.Rect.Dy()+header+footer {
 		t.Fatal("wrong native stitch height", s.result.Rect)
 	}
@@ -284,8 +328,8 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 	}
 	before := append([]byte(nil), s.result.Pix...)
 	s.resume()
-	s.activate(2)
-	deadline = time.Now().Add(3 * time.Second)
+	s.activate(1)
+	deadline := time.Now().Add(3 * time.Second)
 	for !s.preview {
 		pumpLongMessages()
 		if time.Now().After(deadline) {
@@ -317,7 +361,7 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.preferences.IncludePins = false
-	d.openLongCapture(region, false, uiScale(fixture), fixture, fixture, region)
+	d.openLongCapture(region, uiScale(fixture), longSeed{first: fixtureViewport(content, offset, height, header, footer)})
 	s = d.scrolling
 	deadline = time.Now().Add(2 * time.Second)
 	for !s.capturePinsHidden {
@@ -335,8 +379,8 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	wheelsBefore := wheelCount
-	if err := s.wheel(cancelled); err != context.Canceled {
-		t.Fatal("cancelled input request accepted", err)
+	if _, err := s.capture(cancelled); err != context.Canceled {
+		t.Fatal("cancelled capture accepted", err)
 	}
 	pumpLongMessages()
 	if wheelCount != wheelsBefore {
@@ -354,4 +398,127 @@ func TestNativeLongScrollCaptureAndPreview(t *testing.T) {
 	if active, _ := (handler{d}).HasActivity(context.Background()); active {
 		t.Fatal("cancelled session kept activity")
 	}
+}
+
+func assertLongPreviewPixels(t *testing.T, s *scrollWindow) {
+	t.Helper()
+	invalidate(s.hwnd)
+	call(user32, "UpdateWindow", s.hwnd)
+	buffer := s.paintBuffer
+	if buffer.dc == 0 || buffer.bitmap == 0 {
+		t.Fatal("preview did not paint a back buffer")
+	}
+	b, err := newBitmap(image.NewRGBA(image.Rectangle{Max: s.bounds.Size()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.close()
+	dc := call(gdi32, "CreateCompatibleDC", 0)
+	old := call(gdi32, "SelectObject", dc, b.handle)
+	defer func() { call(gdi32, "SelectObject", dc, old); call(gdi32, "DeleteDC", dc) }()
+	if call(gdi32, "BitBlt", dc, 0, 0, b.width, b.height, buffer.dc, 0, 0, srccopy) == 0 {
+		t.Fatal("preview buffer copy failed")
+	}
+	img, err := b.pixels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	colors := map[color.RGBA]bool{}
+	v := s.view().Intersect(img.Bounds())
+	for y := v.Min.Y; y < v.Max.Y; y += 3 {
+		for x := v.Min.X; x < v.Max.X; x += 3 {
+			colors[img.RGBAAt(x, y)] = true
+		}
+	}
+	if len(colors) < 32 {
+		t.Fatalf("preview has only background/control colors: %d", len(colors))
+	}
+	// Hover updates reuse the same back buffer and never resize the window.
+	for _, r := range s.buttons() {
+		p := r.Min.Add(image.Pt(2, 2))
+		s.handle(wmMouseMove, 0, uintptr(uint32(uint16(p.X))|uint32(uint16(p.Y))<<16))
+		call(user32, "UpdateWindow", s.hwnd)
+	}
+	if buffer.bitmap != s.paintBuffer.bitmap {
+		t.Fatal("hover recreated the preview buffer")
+	}
+	if dir := os.Getenv("FL_SCREENSHOT_ARTIFACT_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		name := "manual-live.png"
+		if s.preview {
+			name = "manual-complete.png"
+		}
+		if err := savePNG(filepath.Join(dir, name), img, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Verify production BitBlt, with the preview deliberately overlapping a fully
+// synthetic source. No source-render hook can mask self-capture regressions.
+func TestNativeLongPreviewCaptureExclusion(t *testing.T) {
+	if os.Getenv("FL_SCREENSHOT_NATIVE_TEST") != "1" {
+		t.Skip("opt-in desktop composition")
+	}
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	previous := call(user32, "GetForegroundWindow")
+	d, err := newDesktop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.onError = func(err error) { t.Errorf("native capture: %v", err) }
+	defer func() {
+		d.shutdown()
+		call(ole32, "OleUninitialize")
+		if previous != 0 {
+			call(user32, "SetForegroundWindow", previous)
+		}
+	}()
+	monitor := currentMonitor(cursorPoint())
+	origin := monitor.Min.Add(image.Pt(20, 20))
+	img := scrollFixture(min(960, monitor.Dx()-40), min(760, monitor.Dy()-40))
+	bounds := img.Bounds().Add(origin)
+	base, err := d.openPin(img, bounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.state.Shadow = false
+	base.syncWindow()
+	d.preferences.IncludePins = true
+	d.startLongCapture(bounds, uiScale(base.hwnd), longSeed{first: img})
+	s := d.scrolling
+	if s == nil {
+		t.Fatal("screen crop rejected because it was not a foreign HWND")
+	}
+	if !s.excludedFromCapture {
+		t.Skip("OS does not support capture exclusion")
+	}
+	s.bounds = s.bounds.Add(bounds.Min.Add(image.Pt(15, 15)).Sub(s.bounds.Min))
+	windowAt(s.hwnd, s.bounds, false)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		pumpLongMessages()
+		call(user32, "UpdateWindow", base.hwnd)
+		call(user32, "UpdateWindow", s.hwnd)
+		call(dwmapi, "DwmFlush")
+		shot, err := s.capture(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(shot.Pix, img.Pix) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("capture included the preview or lost source pixels under its overlapping bounds")
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if call(user32, "IsWindowVisible", s.hwnd) == 0 {
+		t.Fatal("capture hid the live preview")
+	}
+	s.close(true)
 }

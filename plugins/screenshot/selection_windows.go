@@ -23,7 +23,6 @@ type selectionWindow struct {
 	cursor                    image.Point
 	toolbarHover              int
 	toolbarFocus              int
-	longMode, longAuto        bool
 	tool                      string
 	ink                       uint32
 	strokeWidth               int
@@ -33,6 +32,7 @@ type selectionWindow struct {
 	textPoint                 image.Point
 	panelCache                *bitmap
 	panelBounds               image.Rectangle
+	paintBuffer               paintBuffer
 }
 
 func (d *desktop) openSelection(img *image.RGBA, bounds image.Rectangle, preferPin bool, focus uintptr) error {
@@ -75,6 +75,7 @@ func (s *selectionWindow) close() {
 	s.background.close()
 	s.dimmed.close()
 	s.panelCache.close()
+	s.paintBuffer.close()
 	s.d.capturing.Store(false)
 	if s.originalFocus != 0 && call(user32, "IsWindow", s.originalFocus) != 0 {
 		call(user32, "SetForegroundWindow", s.originalFocus)
@@ -84,9 +85,7 @@ func (s *selectionWindow) close() {
 func (s *selectionWindow) toolbar() image.Rectangle {
 	scale := max(1.0, float64(call(user32, "GetDpiForWindow", s.hwnd))/96)
 	w, h := px(398, scale), px(34, scale)
-	if s.longMode {
-		w = px(248, scale)
-	} else if s.tool != "" {
+	if s.tool != "" {
 		h = px(64, scale)
 	}
 	w = min(w, s.image.Rect.Dx())
@@ -158,7 +157,7 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 			s.activateTool(index)
 			return 0
 		}
-		if s.tool != "" && !s.longMode {
+		if s.tool != "" {
 			for i, r := range s.inkOptions() {
 				if p.In(r) {
 					if i < 4 {
@@ -191,6 +190,7 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		call(user32, "SetCapture", s.hwnd)
 		return 0
 	case wmMouseMove:
+		previousHover := s.toolbarHover
 		s.cursor = mousePoint(lparam)
 		if s.draft != nil {
 			p := image.Pt(max(s.selected.Min.X, min(s.cursor.X, s.selected.Max.X-1)), max(s.selected.Min.Y, min(s.cursor.Y, s.selected.Max.Y-1)))
@@ -205,6 +205,14 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		s.toolbarHover = s.toolbarHit(s.cursor)
 		if s.dragMode != 0 && !s.busy {
 			s.drag(s.cursor)
+		}
+		if s.dragMode == 0 && s.draft == nil && previousHover >= 0 && s.toolbarHover >= 0 {
+			if previousHover != s.toolbarHover {
+				bar := s.toolbar()
+				r := winRect(image.Rect(bar.Min.X, max(0, bar.Min.Y-px(34, uiScale(s.hwnd))), bar.Max.X, bar.Max.Y))
+				call(user32, "InvalidateRect", s.hwnd, ptr(&r), 0)
+			}
+			return 0
 		}
 		invalidate(s.hwnd)
 		return 0
@@ -257,45 +265,30 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 				invalidate(s.hwnd)
 			}
 		case 'P':
-			if !s.longMode {
-				s.output("pin")
-			}
+			s.output("pin")
 		case 'A':
-			if s.longMode {
-				s.longAuto = true
-				invalidate(s.hwnd)
-			}
-			if !s.longMode && !ctrlDown() {
+			if !ctrlDown() {
 				s.tool = "arrow"
 				invalidate(s.hwnd)
 			}
 		case 'M':
-			if s.longMode {
-				s.longAuto = false
-				invalidate(s.hwnd)
-			}
-			if !s.longMode {
-				s.tool = "mosaic"
-				invalidate(s.hwnd)
-			}
+			s.tool = "mosaic"
+			invalidate(s.hwnd)
 		case 'R', 'E', 'B', 'T':
-			if !s.longMode {
-				s.tool = map[uintptr]string{'R': "rect", 'E': "ellipse", 'B': "pen", 'T': "text"}[wparam]
-				invalidate(s.hwnd)
-			}
+			s.tool = map[uintptr]string{'R': "rect", 'E': "ellipse", 'B': "pen", 'T': "text"}[wparam]
+			invalidate(s.hwnd)
 		case 'L':
-			s.longAuto = true
 			s.output("scroll")
 		case 'Z', 'Y':
 			if ctrlDown() {
 				s.undoMark(wparam == 'Y' || shiftDown())
 			}
 		case 'C':
-			if ctrlDown() && !s.longMode {
+			if ctrlDown() {
 				s.output("copy")
 			}
 		case 'S':
-			if ctrlDown() && !s.longMode {
+			if ctrlDown() {
 				s.output("save")
 			}
 		case 0x25, 0x26, 0x27, 0x28:
@@ -314,9 +307,6 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 }
 
 func (s *selectionWindow) defaultOutput() string {
-	if s.longMode {
-		return "scroll"
-	}
 	if s.preferPin {
 		return "pin"
 	}
@@ -386,9 +376,10 @@ func (s *selectionWindow) drag(p image.Point) {
 }
 
 func (s *selectionWindow) paint() {
-	var ps paintStruct
-	dc := call(user32, "BeginPaint", s.hwnd, ptr(&ps))
-	defer call(user32, "EndPaint", s.hwnd, ptr(&ps))
+	s.paintBuffer.paint(s.hwnd, s.image.Bounds().Size(), s.draw)
+}
+
+func (s *selectionWindow) draw(dc uintptr) {
 	s.dimmed.draw(dc, s.image.Bounds(), s.image.Bounds())
 	if !s.selected.Empty() {
 		s.background.draw(dc, s.selected, s.selected)
@@ -430,12 +421,12 @@ func (s *selectionWindow) output(kind string) {
 	}
 	s.finishText(true)
 	if kind == "scroll" {
-		region, scale, auto := s.selected.Add(s.desktopBounds.Min), uiScale(s.hwnd), s.longAuto
+		region, scale := s.selected.Add(s.desktopBounds.Min), uiScale(s.hwnd)
 		s.d.active.Add(1)
 		defer s.d.active.Add(-1)
 		seed := longSeed{crop(s.image, s.selected), s.annotationMarks()}
 		s.close()
-		s.d.startLongCapture(region, auto, scale, seed)
+		s.d.startLongCapture(region, scale, seed)
 		if s.d.scrolling == nil {
 			if err := s.d.openSelection(s.image, s.desktopBounds, s.preferPin, s.originalFocus); err != nil {
 				s.d.report(s.d.controller, err)

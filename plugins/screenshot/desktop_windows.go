@@ -243,8 +243,6 @@ func (d *desktop) startCapture(id string) {
 					d.report(d.controller, err)
 				}
 				if d.selection != nil {
-					d.selection.longMode = id == "scroll-auto" || id == "scroll-manual"
-					d.selection.longAuto = id == "scroll-auto"
 					invalidate(d.selection.hwnd)
 				}
 				return

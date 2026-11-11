@@ -109,3 +109,27 @@ func TestLongStitchRejectsAmbiguousRepeatedRows(t *testing.T) {
 		t.Fatal("ambiguous periodic pattern accepted", err)
 	}
 }
+
+func TestLongThumbnailIncludesAllRetainedSegments(t *testing.T) {
+	content := scrollFixture(96, 1000)
+	s := newStitcher(fixtureViewport(content, 0, 240, 24, 18))
+	for _, offset := range []int{80, 160, 240} {
+		if _, err := s.add(fixtureViewport(content, offset, 240, 24, 18)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	full := s.result()
+	for _, size := range []image.Point{image.Pt(48, 90), image.Pt(24, 200)} {
+		thumb := s.thumbnail(size.X, size.Y)
+		if thumb.Rect.Dx() > size.X || thumb.Rect.Dy() > size.Y {
+			t.Fatal("thumbnail exceeded bounds", thumb.Rect)
+		}
+		for y := 0; y < thumb.Rect.Dy(); y++ {
+			for x := 0; x < thumb.Rect.Dx(); x++ {
+				if thumb.RGBAAt(x, y) != full.RGBAAt(x*full.Rect.Dx()/thumb.Rect.Dx(), y*full.Rect.Dy()/thumb.Rect.Dy()) {
+					t.Fatalf("thumbnail seam mismatch at %d,%d", x, y)
+				}
+			}
+		}
+	}
+}

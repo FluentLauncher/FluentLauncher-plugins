@@ -83,6 +83,27 @@ func (s *stitcher) result() *image.RGBA {
 	return out
 }
 
+// Sample the retained segments directly: the live preview never allocates a
+// growing full-resolution result for every incoming frame.
+func (s *stitcher) thumbnail(maxWidth, maxHeight int) *image.RGBA {
+	w, h := s.last.Rect.Dx(), s.height
+	factor := min(1, float64(maxWidth)/float64(w), float64(maxHeight)/float64(h))
+	out := image.NewRGBA(image.Rect(0, 0, max(1, int(float64(w)*factor)), max(1, int(float64(h)*factor))))
+	partIndex, start := 0, 0
+	for y := 0; y < out.Rect.Dy(); y++ {
+		sy := y * h / out.Rect.Dy()
+		for partIndex < len(s.parts)-1 && sy >= start+s.parts[partIndex].end-s.parts[partIndex].start {
+			start += s.parts[partIndex].end - s.parts[partIndex].start
+			partIndex++
+		}
+		part := s.parts[partIndex]
+		for x := 0; x < out.Rect.Dx(); x++ {
+			out.SetRGBA(x, y, part.img.RGBAAt(part.img.Rect.Min.X+x*w/out.Rect.Dx(), part.img.Rect.Min.Y+part.start+sy-start))
+		}
+	}
+	return out
+}
+
 type overlap struct{ shift, start, end, hits, seam int }
 
 func rowSignature(img *image.RGBA, y int) (uint32, bool) {

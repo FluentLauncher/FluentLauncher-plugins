@@ -25,8 +25,15 @@ func (h handler) SetTheme(ctx context.Context, theme pluginsdk.Theme) error {
 
 func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 	d.theme = theme
+	if d.scrolling != nil && d.scrolling.captureUIHidden {
+		d.scrolling.themeDeferred = true
+		return
+	}
 	if d.selection != nil {
 		invalidate(d.selection.hwnd)
+	}
+	if d.scrolling != nil {
+		invalidate(d.scrolling.hwnd)
 	}
 	for _, hwnd := range d.pinOrder {
 		p := d.pins[hwnd]
@@ -37,6 +44,9 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 	}
 	if d.selection != nil {
 		windowAt(d.selection.hwnd, d.selection.desktopBounds, false)
+	}
+	if d.scrolling != nil {
+		windowAt(d.scrolling.hwnd, d.scrolling.bounds, false)
 	}
 	for p := d.menuRoot; p != nil; p = p.child {
 		windowAt(p.hwnd, p.bounds, false)
@@ -74,6 +84,25 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 	l := func(x, y, x2, y2 int) { line(dc, p(x, y), p(x2, y2), c, max(1, r.Dx()/12)) }
 	box := func(x, y, x2, y2 int) { l(x, y, x2, y); l(x2, y, x2, y2); l(x2, y2, x, y2); l(x, y2, x, y) }
 	switch name {
+	case "scroll":
+		box(3, 2, 12, 18)
+		l(5, 6, 10, 6)
+		l(5, 10, 10, 10)
+		l(16, 4, 16, 15)
+		l(13, 12, 16, 15)
+		l(16, 15, 19, 12)
+	case "cursor":
+		l(4, 2, 4, 16)
+		l(4, 16, 8, 12)
+		l(8, 12, 12, 18)
+		l(12, 18, 14, 17)
+		l(14, 17, 10, 11)
+		l(10, 11, 16, 11)
+		l(16, 11, 4, 2)
+	case "start":
+		l(6, 3, 16, 10)
+		l(16, 10, 6, 17)
+		l(6, 17, 6, 3)
 	case "copy":
 		box(7, 7, 17, 17)
 		l(3, 13, 3, 3)

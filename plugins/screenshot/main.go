@@ -20,6 +20,8 @@ type menuEntry struct{ id, title, subtitle string }
 var entries = []menuEntry{
 	{"region", "区域截图", "拖选并调整 · Enter 复制 / Ctrl+S 保存 / P 贴图 / Esc 取消"},
 	{"region-pin", "区域截图并原地贴图", "确认后原位覆盖 · 默认阴影 · 点击后方向键微调"},
+	{"scroll-auto", "滚动长截图", "选定内容后自动向下滚动，完成后预览与保存"},
+	{"scroll-manual", "手动滚动长截图", "自行滚动后采集，重复部分自动拼接"},
 	{"screen", "当前显示器截图", "复制鼠标所在显示器的画面，默认包含已有贴图"},
 	{"all", "所有显示器截图", "复制整个虚拟桌面，默认包含已有贴图"},
 	{"quick-save", "所有显示器截图并快速保存", "保存到系统图片文件夹下的 FluentLauncher"},
@@ -78,7 +80,7 @@ func (h handler) execute(ctx context.Context, id string) error {
 	if !valid {
 		return fmt.Errorf("未知截图命令：%s", id)
 	}
-	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" {
+	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" || id == "scroll-auto" || id == "scroll-manual" {
 		if !h.desktop.capturing.CompareAndSwap(false, true) {
 			return errors.New("已有截图正在进行，请先完成或取消")
 		}

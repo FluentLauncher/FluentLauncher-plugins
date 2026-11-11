@@ -22,6 +22,7 @@ type selectionWindow struct {
 	busy               bool
 	cursor             image.Point
 	toolbarHover       int
+	longMode, longAuto bool
 }
 
 func (d *desktop) openSelection(img *image.RGBA, bounds image.Rectangle, preferPin bool, focus uintptr) error {
@@ -117,8 +118,13 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		p := mousePoint(lparam)
 		if index := s.toolbarHit(p); index >= 0 {
-			if index == 3 {
+			if s.longMode && index < 2 {
+				s.longAuto = index == 0
+				invalidate(s.hwnd)
+			} else if index == 3 {
 				s.close()
+			} else if s.longMode {
+				s.output("scroll")
 			} else {
 				s.output([]string{"copy", "save", "pin"}[index])
 			}
@@ -161,13 +167,25 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		case 0x0D:
 			s.output(s.defaultOutput())
 		case 'P':
-			s.output("pin")
+			if !s.longMode {
+				s.output("pin")
+			}
+		case 'A':
+			if s.longMode {
+				s.longAuto = true
+				invalidate(s.hwnd)
+			}
+		case 'M':
+			if s.longMode {
+				s.longAuto = false
+				invalidate(s.hwnd)
+			}
 		case 'C':
-			if ctrlDown() {
+			if ctrlDown() && !s.longMode {
 				s.output("copy")
 			}
 		case 'S':
-			if ctrlDown() {
+			if ctrlDown() && !s.longMode {
 				s.output("save")
 			}
 		case 0x25, 0x26, 0x27, 0x28:
@@ -186,6 +204,9 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 }
 
 func (s *selectionWindow) defaultOutput() string {
+	if s.longMode {
+		return "scroll"
+	}
 	if s.preferPin {
 		return "pin"
 	}
@@ -284,6 +305,14 @@ func (s *selectionWindow) paint() {
 
 func (s *selectionWindow) output(kind string) {
 	if s.busy || s.selected.Empty() {
+		return
+	}
+	if kind == "scroll" {
+		region, scale, auto := s.selected.Add(s.desktopBounds.Min), uiScale(s.hwnd), s.longAuto
+		s.d.active.Add(1)
+		defer s.d.active.Add(-1)
+		s.close()
+		s.d.startLongCapture(region, auto, scale)
 		return
 	}
 	img := crop(s.image, s.selected)

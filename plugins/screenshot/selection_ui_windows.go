@@ -37,6 +37,11 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 	if s.preferPin {
 		primary = 2
 	}
+	if s.longMode {
+		labels = []string{"自动", "手动", "开始", "取消"}
+		icons = []string{"scroll", "cursor", "start", "close"}
+		primary = 2
+	}
 	for i, r := range s.toolbarButtons() {
 		color := t.Text
 		if i == primary {
@@ -44,6 +49,9 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 			color = t.AccentText
 		} else if i == s.toolbarHover {
 			roundPanel(dc, r, px(4, scale), t.SurfaceHover, t.SurfaceHover)
+		}
+		if s.longMode && ((i == 0 && s.longAuto) || (i == 1 && !s.longAuto)) {
+			roundPanel(dc, r, px(4, scale), t.SurfaceHover, t.Accent)
 		}
 		if i == 3 && i == s.toolbarHover {
 			color = t.Danger
@@ -59,6 +67,9 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 		if s.preferPin {
 			hints[0] = "复制 · Ctrl+C"
 			hints[2] = "原地贴图 · Enter / P"
+		}
+		if s.longMode {
+			hints = []string{"自动向下滚动 · A", "手动滚动后采集 · M", "开始长截图 · Enter", "取消 · Esc"}
 		}
 		r := image.Rect(bar.Min.X, max(0, bar.Min.Y-px(34, scale)), min(s.image.Rect.Dx(), bar.Min.X+px(205, scale)), max(0, bar.Min.Y-px(34, scale))+px(28, scale))
 		roundPanel(dc, r, px(4, scale), t.Inverse, t.Inverse)

@@ -26,11 +26,14 @@ type desktop struct {
 	pins        map[uintptr]*pinWindow
 	pinOrder    []uintptr // back to front, preserved while hidden or excluded from capture
 	selection   *selectionWindow
+	scrolling   *scrollWindow
 	preferences preferences
 	theme       pluginsdk.Theme
 	popups      map[uintptr]*popupWindow
 	menuRoot    *popupWindow
 	tempDir     string
+	onError     func(error)                                // controlled native tests can inspect errors without a modal dialog
+	captureLong func(image.Rectangle) (*image.RGBA, error) // nil uses the desktop; native QA may render its own controlled target
 }
 
 // Accessed only on the locked GUI thread, including synchronous Win32 callbacks.
@@ -42,11 +45,14 @@ func newDesktop() (*desktop, error) {
 	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
-			return nil, errors.New("无法注册截图窗口")
+			existing := wndClass{Size: uint32(unsafe.Sizeof(wndClass{}))}
+			if call(user32, "GetClassInfoExW", wc.Instance, ptr(wc.Name), ptr(&existing)) == 0 {
+				return nil, errors.New("无法注册截图窗口")
+			}
 		}
 	}
 	d.controller = d.createWindow("FLScreenshotController", "FluentLauncher 截图", 0, 0, image.Rect(0, 0, 1, 1))
@@ -116,6 +122,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	if s := d.selection; s != nil && hwnd == s.hwnd {
 		return s.handle(msg, wparam, lparam)
 	}
+	if s := d.scrolling; s != nil && hwnd == s.hwnd {
+		return s.handle(msg, wparam, lparam)
+	}
 	if p := d.popups[hwnd]; p != nil {
 		return p.handle(msg, wparam, lparam)
 	}
@@ -135,6 +144,9 @@ func (d *desktop) shutdown() {
 	if d.selection != nil {
 		d.selection.close()
 	}
+	if d.scrolling != nil {
+		d.scrolling.close(true)
+	}
 	d.closeMenu()
 	for _, p := range d.pins {
 		p.close()
@@ -153,6 +165,10 @@ func (d *desktop) report(owner uintptr, err error) {
 		return
 	}
 	log.Print(err)
+	if d.onError != nil {
+		d.onError(err)
+		return
+	}
 	call(user32, "MessageBoxW", owner, ptr(u16(err.Error())), ptr(u16("截图与贴图")), 0x10|0x40000)
 }
 
@@ -221,10 +237,15 @@ func (d *desktop) startCapture(id string) {
 				d.report(d.controller, err)
 				return
 			}
-			if id == "region" || id == "region-pin" {
+			if id == "region" || id == "region-pin" || id == "scroll-auto" || id == "scroll-manual" {
 				if err := d.openSelection(img, bounds, id == "region-pin", originalFocus); err != nil {
 					d.capturing.Store(false)
 					d.report(d.controller, err)
+				}
+				if d.selection != nil {
+					d.selection.longMode = id == "scroll-auto" || id == "scroll-manual"
+					d.selection.longAuto = id == "scroll-auto"
+					invalidate(d.selection.hwnd)
 				}
 				return
 			}

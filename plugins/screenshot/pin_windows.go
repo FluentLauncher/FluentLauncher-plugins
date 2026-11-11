@@ -26,19 +26,31 @@ type pinWindow struct {
 }
 
 func (d *desktop) openPin(img *image.RGBA, bounds image.Rectangle) (*pinWindow, error) {
+	return d.openPinAt(img, bounds, bounds)
+}
+
+func (d *desktop) openPinAt(img *image.RGBA, original, bounds image.Rectangle) (*pinWindow, error) {
 	b, err := newBitmap(img)
 	if err != nil {
 		return nil, err
 	}
-	p := &pinWindow{d: d, image: img, rendered: img, bitmap: b, state: pinState{Original: bounds, Bounds: bounds, Shadow: d.preferences.NewPinShadow, Topmost: true, Opacity: 100}}
+	p, err := d.createPin(img, original, bounds, b)
+	if err != nil {
+		b.close()
+	}
+	return p, err
+}
+
+// createPin takes ownership of the prepared bitmap only on success. Long
+// result previews can transfer it without another full-resolution UI copy.
+func (d *desktop) createPin(img *image.RGBA, original, bounds image.Rectangle, b *bitmap) (*pinWindow, error) {
+	p := &pinWindow{d: d, image: img, rendered: img, bitmap: b, state: pinState{Original: original, Bounds: bounds, Shadow: d.preferences.NewPinShadow, Topmost: true, Opacity: 100}}
 	p.hwnd = d.createWindow("FLScreenshotPin", "贴图：方向键微调，右键操作", wsExTopmost|wsExToolwindow|wsExLayered, d.controller, bounds)
 	if p.hwnd == 0 {
-		b.close()
 		return nil, errors.New("无法创建贴图窗口")
 	}
 	p.shadow = d.createWindow("FLScreenshotShadow", "", wsExTopmost|wsExToolwindow|wsExNoactivate|wsExLayered|wsExTransparent, p.hwnd, bounds.Inset(-16))
 	if p.shadow == 0 {
-		b.close()
 		call(user32, "DestroyWindow", p.hwnd)
 		return nil, errors.New("无法创建贴图阴影")
 	}

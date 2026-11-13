@@ -43,7 +43,7 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_ACTION: ${{ startsWith(github.ref, 'refs/tags/v') && 'tag' || ((github.event_name == 'push' || inputs.action == 'release') && 'push' || 'build') }}
+          RELEASE_ACTION: ${{ startsWith(github.ref, 'refs/tags/v') && 'tag' || (github.event_name == 'push' && 'push' || inputs.action) }}
         run: ./scripts/prepare-release.ps1 -Action $env:RELEASE_ACTION -Tag $env:GITHUB_REF_NAME
       - name: Validate plugins
         if: steps.release.outputs.skip != 'true'

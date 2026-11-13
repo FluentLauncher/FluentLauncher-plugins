@@ -13,15 +13,26 @@ function Assert-Throws([scriptblock]$Run, [string]$Message) {
 }
 
 $tags = @('v1.0.1', 'v1.9.9', 'v1.10.0', 'sdk/v9.0.0', 'v2.0.0-preview.1')
-Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags).tag 'v1.10.1'
-Assert-Equal (Get-PluginReleasePlan -Action push).tag 'v1.0.0'
+$versions = @{ PluginVersions = @{ 'official.echo' = '1.0.1' }; ReleasedVersions = @{ 'official.echo' = '1.0.0' } }
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags @versions).tag 'v1.10.1'
+Assert-Equal (Get-PluginReleasePlan -Action push -PluginVersions @{ 'official.echo' = '1.0.0' }).tag 'v1.0.0'
 Assert-Equal (Get-PluginReleasePlan -Action build).publish $false
 Assert-Equal (Get-PluginReleasePlan -Action build).tag 'local'
 Assert-Equal (Get-PluginReleasePlan -Action tag -Tag v2.0.0 -PublishedTags $tags).tag 'v2.0.0'
-Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags -HeadTags v1.10.0).tag 'v1.10.0'
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags -HeadTags v1.10.0 @versions).tag 'v1.10.0'
 Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags -HeadTags v1.10.0 -PublishedTags v1.10.0).skip $true
 Assert-Throws { Get-PluginReleasePlan -Action tag -Tag v1.9.9 -PublishedTags $tags } 'newer tag'
 Assert-Throws { Get-PluginReleasePlan -Action tag -Tag 'v1.2.3-nightly.1' } 'stable vX.Y.Z'
+$unchanged = @{ PluginVersions = @{ 'official.echo' = '1.0.0' }; ReleasedVersions = @{ 'official.echo' = '1.0.0' } }
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags @unchanged).publish $false
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags @unchanged).skip $false
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags @unchanged).tag 'local'
+Assert-Equal (Get-PluginReleasePlan -Action release -Tags $tags @unchanged).publish $true
+$newPlugin = @{ PluginVersions = @{ 'official.echo' = '1.0.0'; 'official.new' = '0.1.0' }; ReleasedVersions = @{ 'official.echo' = '1.0.0' } }
+Assert-Equal (Get-PluginReleasePlan -Action push -Tags $tags @newPlugin).publish $true
+$decreased = @{ PluginVersions = @{ 'official.echo' = '0.9.0' }; ReleasedVersions = @{ 'official.echo' = '1.0.0' } }
+Assert-Throws { Get-PluginReleasePlan -Action push @decreased } 'version decreased'
+Assert-Throws { Get-PluginReleasePlan -Action release @decreased } 'version decreased'
 
 # Exercise the real scripts with fake GitHub/git commands and isolated assets.
 # These tests never use credentials, the network, or the working tree's tags.
@@ -29,10 +40,14 @@ $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluent-plugin-release-test-' 
 $scripts = Join-Path $testRoot 'scripts'
 $assets = Join-Path $testRoot 'build/release'
 New-Item -ItemType Directory -Force -Path $scripts, $assets | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $testRoot 'plugins/echo') | Out-Null
 foreach ($name in @('prepare-release.ps1', 'publish-release.ps1', 'release-functions.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $scripts
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText((Join-Path $testRoot 'catalog.source.json'), '[{"id":"official.echo"}]', $utf8)
+$manifestPath = Join-Path $testRoot 'plugins/echo/plugin.json'
+[IO.File]::WriteAllText($manifestPath, '{"id":"official.echo","version":"1.0.1"}', $utf8)
 foreach ($name in @('catalog.json', 'catalog.sig', 'official.echo-1.0.1-windows-amd64.zip', 'official.echo-1.0.1-icon.png')) {
     [IO.File]::WriteAllText((Join-Path $assets $name), 'test', $utf8)
 }
@@ -41,6 +56,7 @@ $global:pluginReleaseTest = @{
     Calls = [Collections.Generic.List[string]]::new(); HeadSHA = $sha; MainSHA = $sha; TagSHA = $sha
     Tags = @('v1.0.0', 'v1.0.1', 'sdk/v0.1.0'); HeadTags = @(); PublishedTags = @('v1.0.0', 'v1.0.1')
     TagExists = $false; Existing = ''; FailAPI = $false; FailUpload = $false
+    ReleasedVersion = '1.0.0'; FailReadBaseline = $false
 }
 function global:gh {
     $state = $global:pluginReleaseTest
@@ -66,6 +82,11 @@ function global:git {
             if ($args[-1] -eq 'refs/heads/main') { "$($state.MainSHA)`trefs/heads/main" }
             elseif ($state.TagExists) { "$($state.TagSHA)`t$($args[-1])" }
         }
+        'show' {
+            if ($state.FailReadBaseline) { $global:LASTEXITCODE = 1; return }
+            if ($args[1] -like '*:catalog.source.json') { '[{"id":"official.echo"}]' }
+            else { '{"id":"official.echo","version":"' + $state.ReleasedVersion + '"}' }
+        }
     }
 }
 $originalEnv = @{}
@@ -76,6 +97,24 @@ try {
     $planPath = Join-Path $testRoot 'build/plugin-release-plan.json'
     $env:GITHUB_REF = 'refs/heads/main'
     $env:GITHUB_OUTPUT = Join-Path $testRoot 'outputs.txt'
+    # Documentation/comment-only pushes have unchanged versions: they still
+    # build and upload artifacts, without creating a release or a tag.
+    [IO.File]::WriteAllText($manifestPath, '{"id":"official.echo","version":"1.0.0"}', $utf8)
+    & $prepare -Action push -Repository example/plugins
+    $plan = Get-Content -Raw $planPath | ConvertFrom-Json
+    Assert-Equal $plan.publish $false
+    Assert-Equal $plan.skip $false
+    Assert-Equal $plan.tag 'local'
+    Assert-Throws { & $publish -Repository example/plugins } 'does not authorize'
+    & $prepare -Action release -Repository example/plugins
+    Assert-Equal (Get-Content -Raw $planPath | ConvertFrom-Json).publish $true
+
+    [IO.File]::WriteAllText($manifestPath, '{"id":"official.echo","version":"0.9.0"}', $utf8)
+    Assert-Throws { & $prepare -Action push -Repository example/plugins } 'version decreased'
+    [IO.File]::WriteAllText($manifestPath, '{"id":"official.echo","version":"1.0.1"}', $utf8)
+    $global:pluginReleaseTest.FailReadBaseline = $true
+    Assert-Throws { & $prepare -Action push -Repository example/plugins } 'Cannot read'
+    $global:pluginReleaseTest.FailReadBaseline = $false
     & $prepare -Action push -Repository example/plugins
     $plan = Get-Content -Raw $planPath | ConvertFrom-Json
     Assert-Equal $plan.tag 'v1.0.2'
@@ -118,6 +157,7 @@ try {
     & $prepare -Action push -Repository example/plugins
     Assert-Equal (Get-Content -Raw $planPath | ConvertFrom-Json).tag 'v1.0.2'
     $global:pluginReleaseTest.PublishedTags += 'v1.0.2'
+    $global:pluginReleaseTest.ReleasedVersion = '1.0.1'
     & $prepare -Action push -Repository example/plugins
     Assert-Equal (Get-Content -Raw $planPath | ConvertFrom-Json).skip $true
     Assert-Throws { & $publish -Repository example/plugins } 'does not authorize'

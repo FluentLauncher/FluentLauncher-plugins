@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,12 +19,20 @@ import (
 )
 
 type entry struct {
-	ID              string            `json:"id"`
-	Version         string            `json:"version"`
-	ProtocolVersion int               `json:"protocolVersion"`
-	Name            map[string]string `json:"name"`
-	Summary         map[string]string `json:"summary"`
-	Platforms       map[string]asset  `json:"platforms"`
+	HostServices         []string             `json:"hostServices,omitempty"`
+	ID                   string               `json:"id"`
+	Version              string               `json:"version"`
+	ProtocolVersion      int                  `json:"protocolVersion"`
+	Name                 map[string]string    `json:"name"`
+	Summary              map[string]string    `json:"summary"`
+	Platforms            map[string]asset     `json:"platforms"`
+	Author               string               `json:"author,omitempty"`
+	Description          map[string]string    `json:"description,omitempty"`
+	Usage                map[string]string    `json:"usage,omitempty"`
+	ReleaseNotes         map[string]string    `json:"releaseNotes,omitempty"`
+	Homepage             string               `json:"homepage,omitempty"`
+	Icon                 *asset               `json:"icon,omitempty"`
+	RequiredHostServices []serviceRequirement `json:"requiredHostServices,omitempty"`
 }
 type asset struct {
 	URL    string `json:"url"`
@@ -31,8 +40,14 @@ type asset struct {
 	Size   int64  `json:"size"`
 }
 type manifest struct {
-	ID, Version, Executable string
-	ProtocolVersion         int
+	HostServices                                    []string
+	ID, Version, Executable, Icon, Author, Homepage string
+	ProtocolVersion                                 int
+	RequiredHostServices                            []serviceRequirement
+}
+type serviceRequirement struct {
+	Name    string `json:"name"`
+	Version int    `json:"version"`
 }
 
 func main() {
@@ -101,6 +116,29 @@ func build(tag, repository string, signed bool) error {
 			return fmt.Errorf("invalid manifest: %s", e.ID)
 		}
 		e.Version, e.ProtocolVersion = m.Version, m.ProtocolVersion
+		e.Author, e.Homepage = m.Author, m.Homepage
+		e.RequiredHostServices = m.RequiredHostServices
+		e.HostServices = m.HostServices
+		var resources []packageResource
+		if m.Icon != "" {
+			if !fs.ValidPath(m.Icon) || strings.ContainsAny(m.Icon, `\:`) || filepath.Ext(m.Icon) != ".png" {
+				return fmt.Errorf("invalid icon path: %s", e.ID)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(m.Icon)))
+			if err != nil {
+				return err
+			}
+			if len(data) == 0 || len(data) > 1<<20 {
+				return fmt.Errorf("invalid icon size: %s", e.ID)
+			}
+			resources = append(resources, packageResource{m.Icon, data})
+			iconName := e.ID + "-" + m.Version + "-icon.png"
+			if err := os.WriteFile(filepath.Join(stage, iconName), data, 0644); err != nil {
+				return err
+			}
+			sum := sha256.Sum256(data)
+			e.Icon = &asset{URL: "https://github.com/" + repository + "/releases/download/" + tag + "/" + iconName, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data))}
+		}
 		exe := filepath.Join(stage, m.Executable)
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", exe, "./"+filepath.ToSlash(dir))
 		cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
@@ -110,7 +148,7 @@ func build(tag, repository string, signed bool) error {
 		}
 		name := e.ID + "-" + m.Version + "-windows-amd64.zip"
 		archive := filepath.Join(stage, name)
-		if err := packageZip(archive, manifestBytes, exe, m.Executable); err != nil {
+		if err := packageZip(archive, manifestBytes, exe, m.Executable, resources...); err != nil {
 			return err
 		}
 		if err := os.Remove(exe); err != nil {
@@ -153,7 +191,12 @@ func build(tag, repository string, signed bool) error {
 	return nil
 }
 
-func packageZip(path string, manifest []byte, executable, name string) error {
+type packageResource struct {
+	name string
+	data []byte
+}
+
+func packageZip(path string, manifest []byte, executable, name string, resources ...packageResource) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -182,6 +225,15 @@ func packageZip(path string, manifest []byte, executable, name string) error {
 	}
 	if _, err := dst.Write(binary); err != nil {
 		return err
+	}
+	for _, resource := range resources {
+		dst, err := w.Create(resource.name)
+		if err != nil {
+			return err
+		}
+		if _, err := dst.Write(resource.data); err != nil {
+			return err
+		}
 	}
 	if err := w.Close(); err != nil {
 		return err

@@ -7,7 +7,7 @@
 | 目录 | 用途 |
 | --- | --- |
 | `sdk/` | 独立 Go module，仅依赖标准库 |
-| `plugins/echo/` | 最小查询与复制示例 |
+| `plugins/echo/` | 查询、复制、独立配置与可选宿主通知示例 |
 | `plugins/devtools/` | 多关键词、文本工具、多个结果与单元测试 |
 | `plugins/clipboard/` | Windows API、内存状态与并发示例 |
 | `plugins/screenshot/` | 紧凑截图工具条、标注、滚动拼接、主题透明菜单、像素放大镜与原地贴图；[使用与验证](docs/screenshot.md) |
@@ -27,7 +27,7 @@ Pop-Location
 ./scripts/build.ps1
 ```
 
-输出在 `build/release`，ZIP 根目录包含 `plugin.json` 与插件 EXE。可在启动器“设置 → 插件 → 从 ZIP 安装”中测试。未签名目录仅用于本地开发，正式客户端不会接受。
+输出在 `build/release`，ZIP 根目录包含 `plugin.json`、插件 EXE 与图标资源。可在启动器“设置 → 插件市场 → 本地安装 → 从 ZIP 安装”中测试。未签名目录仅用于本地开发，正式客户端不会接受。
 
 ## 开发自己的插件
 
@@ -59,3 +59,7 @@ Pop-Location
 ## 宿主快捷键命令
 
 插件通过 manifest 的 `commands` 声明快捷键命令。宿主统一管理按键与冲突，推荐键默认待启用；支持打开插件查询或通过 SDK 可选 `CommandHandler` 直接调用。剪贴板、开发工具及模板已提供查询入口示例。完整字段、能力协商与实现示例见 [协议文档](docs/protocol.md#宿主快捷键命令)。
+
+## 市场展示与宿主能力
+
+官方插件各自携带 `assets/icon.png`、作者、主页与使用说明。运行 `go run ./tools/icons` 可重建四款图标；打包时同一 PNG 同时进入 ZIP 和签名目录的固定 Release 资源。目录图标会单独验哈希，主程序无需为新增插件硬编码 ID。宿主服务与声明式配置示例见 [协议文档](docs/protocol.md#宿主服务-v1)。

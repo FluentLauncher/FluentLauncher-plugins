@@ -1,7 +1,7 @@
 {
   "id": "official.devtools",
   "name": "开发工具",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "protocolVersion": 1,
   "executable": "devtools.exe",
   "keywords": [
@@ -24,5 +24,9 @@
       "activation": "showQuery",
       "query": "uuid "
     }
-  ]
+  ],
+  "icon": "assets/icon.png",
+  "author": "FluentLauncher",
+  "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+  "usage": "输入 json 加文本进行格式化；hash abc 生成摘要；uuid 生成标识符。"
 }

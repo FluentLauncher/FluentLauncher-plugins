@@ -10,6 +10,18 @@
       "zh-Hans": "最小可用的插件：输入 echo 加文本，结果里原样返回，回车即可复制。",
       "en": "The minimal working plugin: type echo plus text, results come back verbatim, Enter copies.",
       "zh-Hant": "最小可用的外掛程式：輸入 echo 加文字，結果中原樣返回，按 Enter 即可複製。"
+    },
+    "author": "FluentLauncher",
+    "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+    "description": {
+      "zh-Hans": "最小可用的插件：输入 echo 加文本，结果里原样返回，回车即可复制。",
+      "en": "The minimal working plugin: type echo plus text, results come back verbatim, Enter copies.",
+      "zh-Hant": "最小可用的外掛程式：輸入 echo 加文字，結果中原樣返回，按 Enter 即可複製。"
+    },
+    "usage": {
+      "zh-Hans": "输入 echo hello，按回车复制 hello。",
+      "en": "Type echo hello, then press Enter to copy hello.",
+      "zh-Hant": "輸入 echo hello，按 Enter 複製 hello。"
     }
   },
   {
@@ -23,6 +35,18 @@
       "zh-Hans": "离线文本工具：时间戳与时区、UUID、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要。",
       "en": "Offline text tools: timestamps and time zones, UUIDs, JSON validation and formatting, Base64 and URL codecs, regex matching, digests.",
       "zh-Hant": "離線文字工具：時間戳與時區、UUID、JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要。"
+    },
+    "author": "FluentLauncher",
+    "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+    "description": {
+      "zh-Hans": "离线文本工具：时间戳与时区、UUID、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要。",
+      "en": "Offline text tools: timestamps and time zones, UUIDs, JSON validation and formatting, Base64 and URL codecs, regex matching, digests.",
+      "zh-Hant": "離線文字工具：時間戳與時區、UUID、JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要。"
+    },
+    "usage": {
+      "zh-Hans": "输入 json 加文本进行格式化；hash abc 生成摘要；uuid 生成标识符。",
+      "en": "Use json with text to format JSON, hash abc to create digests, or uuid to generate an identifier.",
+      "zh-Hant": "輸入 json 加文字進行格式化；hash abc 產生摘要；uuid 產生識別碼。"
     }
   },
   {
@@ -36,6 +60,18 @@
       "zh-Hans": "记录复制过的文本：仅内存、最多 50 条、退出即清空，搜索后回车复制。",
       "en": "Remembers copied text in memory only (50 items, cleared on exit); search and press Enter to copy.",
       "zh-Hant": "記錄複製過的文字：僅限記憶體、最多 50 條、離開即清空，搜尋後按 Enter 複製。"
+    },
+    "author": "FluentLauncher",
+    "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+    "description": {
+      "zh-Hans": "记录复制过的文本：仅内存、最多 50 条、退出即清空，搜索后回车复制。",
+      "en": "Remembers copied text in memory only (50 items, cleared on exit); search and press Enter to copy.",
+      "zh-Hant": "記錄複製過的文字：僅限記憶體、最多 50 條、離開即清空，搜尋後按 Enter 複製。"
+    },
+    "usage": {
+      "zh-Hans": "输入 clip 浏览文本历史，继续输入关键词筛选，回车复制。历史仅在插件运行期间保留。",
+      "en": "Type clip to browse text history, add a keyword to filter, and press Enter to copy. History lasts only while the plugin runs.",
+      "zh-Hant": "輸入 clip 瀏覽文字歷史，繼續輸入關鍵字篩選，按 Enter 複製。歷史僅在外掛程式執行期間保留。"
     }
   },
   {
@@ -49,6 +85,18 @@
       "zh-Hans": "截图标注与长截图：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
       "en": "Annotate and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
       "zh-Hant": "截圖標註與長截圖：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
+    },
+    "author": "FluentLauncher",
+    "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+    "description": {
+      "zh-Hans": "截图标注与长截图：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
+      "en": "Annotate and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
+      "zh-Hant": "截圖標註與長截圖：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
+    },
+    "usage": {
+      "zh-Hans": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。",
+      "en": "Type screenshot to choose a capture mode, or enable capture and pin commands in Shortcuts. Scroll manually for stitched captures.",
+      "zh-Hant": "輸入 截圖 選擇擷取方式；在快捷鍵頁啟用區域截圖或貼圖命令。長截圖由你捲動，外掛程式自動拼接。"
     }
   }
 ]

@@ -8,7 +8,7 @@ import (
 )
 
 func TestQueryReturnsTheTypedText(t *testing.T) {
-	results, err := echoPlugin{}.Query(context.Background(), pluginsdk.Query{Text: "hello", Keyword: "echo"})
+	results, err := (&echoPlugin{}).Query(context.Background(), pluginsdk.Query{Text: "hello", Keyword: "echo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestQueryReturnsTheTypedText(t *testing.T) {
 // With no text the example still answers, so the keyword alone explains itself
 // instead of leaving an empty list.
 func TestQueryWithoutTextExplainsItself(t *testing.T) {
-	results, err := echoPlugin{}.Query(context.Background(), pluginsdk.Query{Keyword: "echo"})
+	results, err := (&echoPlugin{}).Query(context.Background(), pluginsdk.Query{Keyword: "echo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,13 +39,13 @@ func TestQueryWithoutTextExplainsItself(t *testing.T) {
 func TestCanceledQueryStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := (echoPlugin{}).Query(ctx, pluginsdk.Query{Text: "x"}); err == nil {
+	if _, err := (&echoPlugin{}).Query(ctx, pluginsdk.Query{Text: "x"}); err == nil {
 		t.Fatal("a canceled query returned results")
 	}
 }
 
 func TestExecuteAcceptsTheAction(t *testing.T) {
-	if err := (echoPlugin{}).Execute(context.Background(), pluginsdk.ExecuteRequest{ResultID: "echo", ActionID: "copy"}); err != nil {
+	if err := (&echoPlugin{}).Execute(context.Background(), pluginsdk.ExecuteRequest{ResultID: "echo", ActionID: "copy"}); err != nil {
 		t.Fatal(err)
 	}
 }

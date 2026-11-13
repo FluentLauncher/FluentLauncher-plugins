@@ -1,17 +1,57 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
-  "keywords": ["截图", "screenshot", "snap", "截屏"],
+  "keywords": [
+    "截图",
+    "screenshot",
+    "snap",
+    "截屏"
+  ],
   "permissions": [],
   "description": "截图标注与原地贴图；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
   "commands": [
-    {"id": "region", "title": "区域截图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+A"]},
-    {"id": "region-pin", "title": "区域截图并原地贴图", "scope": "global", "activation": "invoke", "defaultShortcuts": ["Ctrl+Alt+P"]},
-    {"id": "screen", "title": "当前显示器截图", "scope": "global", "activation": "invoke"},
-    {"id": "show", "title": "显示全部贴图", "scope": "global", "activation": "invoke"},
-    {"id": "hide", "title": "隐藏全部贴图", "scope": "global", "activation": "invoke"}
-  ]
+    {
+      "id": "region",
+      "title": "区域截图",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+A"
+      ]
+    },
+    {
+      "id": "region-pin",
+      "title": "区域截图并原地贴图",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+P"
+      ]
+    },
+    {
+      "id": "screen",
+      "title": "当前显示器截图",
+      "scope": "global",
+      "activation": "invoke"
+    },
+    {
+      "id": "show",
+      "title": "显示全部贴图",
+      "scope": "global",
+      "activation": "invoke"
+    },
+    {
+      "id": "hide",
+      "title": "隐藏全部贴图",
+      "scope": "global",
+      "activation": "invoke"
+    }
+  ],
+  "icon": "assets/icon.png",
+  "author": "FluentLauncher",
+  "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+  "usage": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。"
 }

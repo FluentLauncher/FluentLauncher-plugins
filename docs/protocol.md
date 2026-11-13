@@ -99,3 +99,19 @@ SDK 可选实现 `ThemeHandler.SetTheme(context.Context, Theme) error`，initial
 `Theme` 传递解析后的 `dark`、`background`、`surface`、`surfaceHover`、`border`、`text`、`textMuted`、`accent`、`accentText`、`danger`、`inverse`、`inverseText`、`radius` 与 `spacing`。颜色为不透明 sRGB 整数 `0xRRGGBB`，JSON 使用十进制数；宿主将透明表面合成到背景色。工具字号由插件保留，搜索面板字号不传入。
 
 主题变更不会启动休眠插件，也不刷新空闲时间。宿主正常停止时先关闭 stdin，给插件最多 400ms 处理 EOF 清理，然后仍通过 Job Object 回收；协议超时与异常停止继续立即结束进程。
+
+## 宿主服务 v1
+
+新 SDK 通过可选 `HostAware.SetHost(Host)` 接入双向服务，不改变原 Handler。Manifest 使用 `hostServices` 声明需要的服务；`requiredHostServices` 指定不可缺少的服务与最低兼容等级。SDK 的 `ServeFromManifest` 会在旧宿主未协商必要服务时明确拒绝业务调用。
+
+当前可用：统一通知、显示 / 隐藏搜索面板、读写文本剪贴板、文件选择 / 保存、当前插件配置、运行环境信息、打开与定位路径。调用方式为 `host.Call(ctx, "settings.get", nil, &result)`，不带 `host.` 前缀；SDK 提供 Notify / ReadClipboardText / WriteClipboardText / ShowQuery 包装。
+
+宿主只向声明 `hostServices.v1` 的插件发送 configureHost。Host 中包含 Supports、Configuration 和 Call；首次未收到 SetHost 时保留旧宿主降级路径。查询不能使用会弹窗、抢焦点或打开文件的服务，这些服务只能在显式动作 / 命令期间调用。查询仍按现有短超时执行，新宿主服务的显式动作使用独立的两分钟上限。
+
+可选 `SettingsHandler.SettingsChanged(context.Context) error` 声明 settings 能力。宿主配置改变后只通知已运行进程，不启动休眠插件。处理器通过 settings.get 重读，UI 操作入队，不等待绘制。
+
+Manifest 可选 icon（包内 PNG）、author、homepage、usage、settings。设置类型为 text / bool / choice / number，必须声明合法 default；choice 提供字符串 options，number 可选 min / max。宿主生成原生控件，约 400ms 后保存到独立 plugin-data/<id>/config.json，升级和卸载均不删除插件数据。
+
+官方 echo 演示查询内读取插件配置、结果动作调用宿主通知，并在旧宿主保留普通回显。新 API 需发布新的 SDK 标签后才能由第三方引用，已发布的 sdk/v0.1.0 不含这些类型。SDK 与宿主维护独立的标准库 RPC peer，修改帧路由和取消逻辑时应同步两端并运行嵌套调用回归。
+
+完整参数表、错误码、目录与生命周期边界见启动器仓库 [宿主服务 v1](https://github.com/FluentLauncher/FluentLauncher/blob/main/docs/plugin-host-api.md)。此文档随本次主程序改动发布，未经推送时应查看本地配套源码。

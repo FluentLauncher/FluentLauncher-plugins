@@ -22,14 +22,15 @@ package pluginsdk
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
+	"sync/atomic"
+
+	"github.com/FluentLauncher/FluentLauncher-plugins/sdk/internal/rpc"
 )
 
 const MaxMessageBytes = 4 << 20
@@ -37,12 +38,6 @@ const MaxMessageBytes = 4 << 20
 // ProtocolVersion is the wire version this SDK speaks; it must match the
 // manifest's protocolVersion and the launcher's own constant.
 const ProtocolVersion = 1
-
-// maxInflight is how many handler calls one plugin runs at once. The launcher
-// sends one query per plugin per search, so this only fills up if the host is
-// waiting on replies it never reads; the reply says so instead of the plugin
-// piling up goroutines.
-const maxInflight = 8
 
 // Action kinds the launcher understands. They are strings on the wire; these
 // constants keep a typo from silently dropping the action, and the host's
@@ -178,7 +173,22 @@ func ServeFromManifest(handler Handler) error {
 	if err != nil {
 		return err
 	}
-	return Serve(id, handler)
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(executable), "plugin.json"))
+	if err != nil {
+		return err
+	}
+	var metadata struct {
+		Required []HostService `json:"requiredHostServices"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return err
+	}
+	server := &server{pluginID: id, handler: handler, output: os.Stdout, required: metadata.Required}
+	return server.run(os.Stdin)
 }
 
 // ManifestID reads the "id" from the plugin.json next to the executable.
@@ -212,112 +222,31 @@ func readManifestID(dir string) (string, error) {
 }
 
 func ServeIO(pluginID string, handler Handler, input io.Reader, output io.Writer) error {
-	server := &server{pluginID: pluginID, handler: handler, output: output, active: map[string]context.CancelFunc{}}
+	server := &server{pluginID: pluginID, handler: handler, output: output}
 	return server.run(input)
 }
 
 type server struct {
-	pluginID string
-	handler  Handler
-	output   io.Writer
-	writeMu  sync.Mutex
-	activeMu sync.Mutex
-	active   map[string]context.CancelFunc
-	inflight int
-	wg       sync.WaitGroup
+	pluginID   string
+	handler    Handler
+	output     io.Writer
+	peer       atomic.Pointer[rpc.Peer]
+	configured atomic.Bool
+	required   []HostService
 }
 
 func (s *server) run(input io.Reader) error {
-	for {
-		payload, err := readFrame(input)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		var req request
-		if err := json.Unmarshal(payload, &req); err != nil {
-			s.writeError(nil, -32700, "无法解析的 JSON")
-			continue
-		}
-		if req.Method == "$/cancelRequest" {
-			var cancel struct {
-				ID json.RawMessage `json:"id"`
-			}
-			if json.Unmarshal(req.Params, &cancel) == nil {
-				s.cancel(string(cancel.ID))
-			}
-			continue
-		}
-		if req.JSONRPC != "2.0" || req.Method == "" {
-			s.writeError(req.ID, -32600, "无效的请求：需要 JSON-RPC 2.0 和方法名")
-			continue
-		}
-		key := string(req.ID)
-		ctx, cancel := context.WithCancel(context.Background())
-		if !s.begin(key, cancel) {
-			cancel()
-			s.writeError(req.ID, -32000, "插件同时处理的请求过多，请稍后重试")
-			continue
-		}
-		s.wg.Add(1)
-		go func(req request, ctx context.Context, cancel context.CancelFunc, key string) {
-			defer s.wg.Done()
-			defer cancel()
-			defer s.finish(key)
-			result, err := s.handle(ctx, req)
-			if err != nil {
-				s.writeError(req.ID, -32603, err.Error())
-				return
-			}
-			s.writeResult(req.ID, result)
-		}(req, ctx, cancel, key)
-	}
-	s.activeMu.Lock()
-	for _, cancel := range s.active {
-		cancel()
-	}
-	s.activeMu.Unlock()
-	s.wg.Wait()
-	return nil
-}
-
-func (s *server) cancel(key string) {
-	s.activeMu.Lock()
-	cancel := s.active[key]
-	s.activeMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
-// begin registers one request and reports whether the plugin can take it. The
-// count and the registration happen under one lock: reading the map without it
-// raced with the goroutine that deletes its own entry.
-func (s *server) begin(key string, cancel context.CancelFunc) bool {
-	s.activeMu.Lock()
-	defer s.activeMu.Unlock()
-	if s.inflight >= maxInflight {
-		return false
-	}
-	s.inflight++
-	if key != "" {
-		s.active[key] = cancel
-	}
-	return true
-}
-
-func (s *server) finish(key string) {
-	s.activeMu.Lock()
-	s.inflight--
-	if key != "" {
-		delete(s.active, key)
-	}
-	s.activeMu.Unlock()
+	peer := rpc.New(input, s.output, "p:", func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		return s.handle(ctx, request{JSONRPC: "2.0", Method: method, Params: params})
+	})
+	s.peer.Store(peer)
+	return peer.Wait()
 }
 
 func (s *server) handle(ctx context.Context, req request) (any, error) {
+	if len(s.required) > 0 && !s.configured.Load() && (req.Method == "query" || req.Method == "execute" || req.Method == "executeCommand") {
+		return nil, errors.New("插件需要新版宿主提供所需服务，请更新 FluentLauncher")
+	}
 	switch req.Method {
 	case "initialize":
 		result := InitializeResult{ProtocolVersion: ProtocolVersion, PluginID: s.pluginID}
@@ -330,7 +259,49 @@ func (s *server) handle(ctx context.Context, req request) (any, error) {
 		if _, ok := s.handler.(ThemeHandler); ok {
 			result.Capabilities = append(result.Capabilities, "theme")
 		}
+		if _, ok := s.handler.(HostAware); ok {
+			result.Capabilities = append(result.Capabilities, "hostServices.v1")
+		}
+		if _, ok := s.handler.(SettingsHandler); ok {
+			result.Capabilities = append(result.Capabilities, "settings")
+		}
 		return result, nil
+	case "configureHost":
+		handler, ok := s.handler.(HostAware)
+		if !ok {
+			return nil, errors.New("插件未实现 hostServices.v1")
+		}
+		var configuration HostConfiguration
+		if err := json.Unmarshal(req.Params, &configuration); err != nil {
+			return nil, err
+		}
+		if configuration.APIVersion != 1 {
+			return nil, errors.New("unsupported host API version")
+		}
+		for _, required := range s.required {
+			found := false
+			for _, available := range configuration.Services {
+				if available.Name == required.Name && available.Version >= required.Version {
+					found = true
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("required host service unavailable: %s", required.Name)
+			}
+		}
+		peer := s.peer.Load()
+		if peer == nil {
+			return nil, errors.New("host connection is not ready")
+		}
+		handler.SetHost(&hostClient{peer: peer, configuration: configuration})
+		s.configured.Store(true)
+		return map[string]any{}, nil
+	case "settingsChanged":
+		handler, ok := s.handler.(SettingsHandler)
+		if !ok {
+			return nil, errors.New("插件未实现 settings")
+		}
+		return map[string]any{}, handler.SettingsChanged(ctx)
 	case "setTheme":
 		handler, ok := s.handler.(ThemeHandler)
 		if !ok {
@@ -387,52 +358,4 @@ func (s *server) handle(ctx context.Context, req request) (any, error) {
 		return map[string]any{}, nil
 	}
 	return nil, fmt.Errorf("不支持的方法 %q", req.Method)
-}
-
-func (s *server) writeResult(id json.RawMessage, result any) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	_ = writeJSONFrame(s.output, response{JSONRPC: "2.0", ID: id, Result: result})
-}
-
-func (s *server) writeError(id json.RawMessage, code int, message string) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	_ = writeJSONFrame(s.output, response{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: message}})
-}
-
-func readFrame(r io.Reader) ([]byte, error) {
-	var header [4]byte
-	if _, err := io.ReadFull(r, header[:]); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, io.EOF
-		}
-		return nil, err
-	}
-	length := int(binary.BigEndian.Uint32(header[:]))
-	if length <= 0 || length > MaxMessageBytes {
-		return nil, fmt.Errorf("invalid frame length %d", length)
-	}
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
-}
-
-func writeJSONFrame(w io.Writer, value any) error {
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	if len(payload) == 0 || len(payload) > MaxMessageBytes {
-		return fmt.Errorf("message exceeds limit")
-	}
-	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(payload)))
-	if _, err := w.Write(header[:]); err != nil {
-		return err
-	}
-	_, err = w.Write(payload)
-	return err
 }

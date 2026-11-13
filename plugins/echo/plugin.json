@@ -1,10 +1,37 @@
 {
   "id": "official.echo",
   "name": "回显示例",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "protocolVersion": 1,
   "executable": "echo.exe",
-  "keywords": ["echo"],
+  "keywords": [
+    "echo"
+  ],
   "permissions": [],
-  "description": "演示查询结果和复制动作。插件是可执行文件，权限字段仅作声明。"
+  "description": "演示查询结果和复制动作。插件是可执行文件，权限字段仅作声明。",
+  "icon": "assets/icon.png",
+  "author": "FluentLauncher",
+  "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+  "usage": "输入 echo hello，按回车复制 hello。",
+  "hostServices": [
+    "ui.notify",
+    "settings.get",
+    "settings.set",
+    "context.get"
+  ],
+  "settings": [
+    {
+      "id": "prefix",
+      "title": "文本前缀",
+      "description": "添加在回显结果前，可留空。",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "id": "preview",
+      "title": "显示文本预览",
+      "type": "bool",
+      "default": true
+    }
+  ]
 }

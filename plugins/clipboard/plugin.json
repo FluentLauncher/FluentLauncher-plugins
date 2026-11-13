@@ -1,7 +1,7 @@
 {
   "id": "official.clipboard",
   "name": "剪贴板历史",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "protocolVersion": 1,
   "executable": "clipboard.exe",
   "keywords": [
@@ -23,5 +23,9 @@
       "activation": "showQuery",
       "query": "clip "
     }
-  ]
+  ],
+  "icon": "assets/icon.png",
+  "author": "FluentLauncher",
+  "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
+  "usage": "输入 clip 浏览文本历史，继续输入关键词筛选，回车复制。历史仅在插件运行期间保留。"
 }

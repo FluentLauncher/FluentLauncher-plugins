@@ -2,14 +2,21 @@ name: Official plugin packages
 
 on:
   push:
+    branches: ['main']
     tags: ['v*', 'sdk/v*']
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Build packages only, or publish a new plugin collection from main'
+        type: choice
+        options: [build, release]
+        default: build
 
 permissions:
   contents: read
 
 concurrency:
-  group: plugins-${{ github.ref }}
+  group: official-plugin-release
   cancel-in-progress: false
 
 jobs:
@@ -24,10 +31,22 @@ jobs:
       CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Test release planning and publishing guards
+        run: ./scripts/test-release.ps1
+      - name: Plan plugin collection release
+        id: release
+        if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ACTION: ${{ startsWith(github.ref, 'refs/tags/v') && 'tag' || ((github.event_name == 'push' || inputs.action == 'release') && 'push' || 'build') }}
+        run: ./scripts/prepare-release.ps1 -Action $env:RELEASE_ACTION -Tag $env:GITHUB_REF_NAME
       - name: Validate plugins
+        if: steps.release.outputs.skip != 'true'
         run: |
           go build ./...
           if ($LASTEXITCODE -ne 0) { throw 'Plugin build failed' }
@@ -45,35 +64,21 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'SDK tests failed' }
           } finally { Pop-Location }
       - name: Package ZIPs and signed catalogue
-        if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') && steps.release.outputs.skip != 'true' }}
         env:
           FLUENTLAUNCHER_PLUGIN_PUBLIC_KEY: ${{ vars.FLUENTLAUNCHER_PLUGIN_PUBLIC_KEY }}
           FLUENTLAUNCHER_PLUGIN_PRIVATE_KEY: ${{ secrets.FLUENTLAUNCHER_PLUGIN_PRIVATE_KEY }}
         run: |
-          $signed = $env:GITHUB_REF.StartsWith('refs/tags/v')
-          $tag = 'local'
-          if ($signed) { $tag = $env:GITHUB_REF_NAME }
-          ./scripts/build.ps1 -Tag $tag -Signed:$signed
+          $plan = Get-Content -Raw build/plugin-release-plan.json | ConvertFrom-Json
+          ./scripts/build.ps1 -Tag $plan.tag -Signed:($plan.publish)
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/sdk/') && steps.release.outputs.skip != 'true' }}
         with:
           name: FluentLauncher-official-plugins
           path: build/release/*
           if-no-files-found: error
       - name: Publish plugin release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.release.outputs.publish == 'true' && steps.release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $existing = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            if (-not ($existing | ConvertFrom-Json).isDraft) { throw 'Published plugin releases are immutable; use a new tag' }
-          } else {
-            gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --verify-tag --draft --title $env:GITHUB_REF_NAME --generate-notes
-            if ($LASTEXITCODE -ne 0) { throw 'Creating draft failed' }
-          }
-          $assets = @(Get-ChildItem -LiteralPath build/release -File | ForEach-Object FullName)
-          gh release upload $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --clobber @assets
-          if ($LASTEXITCODE -ne 0) { throw 'Uploading packages failed' }
-          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw 'Publishing packages failed' }
+        run: ./scripts/publish-release.ps1

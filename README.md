@@ -43,7 +43,11 @@ Pop-Location
 
 ## 发布
 
-插件的 `plugin.json` 决定插件版本。SDK 单独使用 `sdk/v0.1.0` 等标签；插件集合使用 `v1.0.0` 等标签。每次集合发布携带完整目录与当前插件包，插件各自版本不必一起增加；旧 Release 不覆盖。
+推送到 `main` 后，GitHub Actions 自动检查根模块与 SDK、构建全部插件 ZIP、签署目录并发布新的正式 Release；插件市场刷新后即可获取新目录。集合标签按已有 `vX.Y.Z` 自动递增 patch（例如 `v1.0.1` → `v1.0.2`），无需手动打集合标签。普通功能分支推送不发布。
+
+插件的 `plugin.json` 决定插件版本，集合标签与插件版本独立。修改某个插件时递增它的 `version`；修改 SDK 公共行为时递增受影响插件的版本。仅递增集合标签不会让相同插件版本显示“可更新”。每次集合发布携带完整目录与当前插件包，未修改的插件无需一起增加版本；旧 Release 不覆盖，版本不会自动写回源码。
+
+SDK 仍单独使用 `sdk/v0.1.0` 等标签，只触发验证。手动推送新的 `vX.Y.Z` 集合标签仍可触发正式发布。Actions 的 **Run workflow** 默认 `build` 只生成未签名构建产物；选择 `release` 则从 `main` 发布下一个集合版本。
 
 正式目录使用独立于启动器更新密钥的 Ed25519 密钥。可用启动器依赖的 `go tool mygo keygen -o <独立密钥目录>` 生成兼容密钥对（32 字节公钥、64 字节私钥，均为 Base64）：
 
@@ -51,7 +55,7 @@ Pop-Location
 - 本仓库与启动器仓库 Repository variable：`FLUENTLAUNCHER_PLUGIN_PUBLIC_KEY`，填写同一个公钥。
 - 启动器 Repository variable：`FLUENTLAUNCHER_PLUGIN_REPOSITORY`，填写本仓库的 `owner/name`。
 
-推送 `v1.0.0` 标签后，Actions 验证源码、按目录清单构建独立 ZIP 和 `catalog.json` / `catalog.sig`，全部上传草稿后才公开 Release。签名覆盖目录原始字节的 SHA-256，目录记录每个 ZIP 的固定版本 URL、大小及 SHA-256。
+自动与手动正式发布都按目录清单构建独立 ZIP 和 `catalog.json` / `catalog.sig`，全部上传草稿后才公开并标记为 Latest。签名覆盖目录原始字节的 SHA-256，目录记录每个 ZIP 的固定版本 URL、大小及 SHA-256。发布任务串行执行；失败可以重跑并继续同一提交的草稿，成功的自动发布重跑会跳过，已发布的包禁止覆盖。规划版本时若 `main` 已有更新提交，过时的推送任务会跳过。
 
 目录刷新只下载元数据；点击安装才下载可执行文件。私钥不要提交、不要与主程序更新私钥混用；备份原密钥，后续版本持续使用。
 

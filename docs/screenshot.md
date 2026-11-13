@@ -102,4 +102,6 @@ go test ./plugins/screenshot -run '^TestNativePinCompositeAndKeyboard$' -count=1
 
 1.6.1 本地验证（2026-11-13）：根模块与 SDK 的构建、vet 和测试通过。离屏 GDI 检查覆盖全部工具在 100% / 150% / 200% 缩放下的提示尺寸与居中定位、显示器边缘退让，以及键盘焦点提示的构建；已查看 `build/screenshot-tooltip/toolbar-hint-dark-*-*.png` 的深浅主题预览。测试使用合成内容，不显示窗口或读取个人截图。已生成 `build/release/official.screenshot-1.6.1-windows-amd64.zip`；实际混合 DPI 多屏交互仍需实机验收，未覆盖已安装插件、未推送发布。
 
+1.6.2 修复小字号、重复段落中的滚动距离误判：先用抽样定位候选，再完整比较候选重叠行，并按内容像素计算误差，避免空白背景掩盖段落编号等细节。相同行和纯色行保留快速比较。新增 9 / 12 / 16 像素字体及非抗锯齿 / ClearType 的逐像素拼接回归，同时验证轻微渲染变化仍能匹配。根模块与 SDK 的构建、vet、全量测试及相关 race 检查通过。测试使用离屏合成内容，不捕获个人桌面。
+
 2026-11-11 本地验证：根模块 / SDK 的构建、静态检查和测试通过；受控原生检查通过，已查看 `pin-shadow.png`、`pin-no-shadow.png` 和 `selection.png`。实际 ZIP 进程握手返回 `executeCommand` / `activity`、查询返回 10 条菜单、空闲 activity=false、直接命令与关闭 stdin 后正常退出均通过。宿主完整检查及插件生命周期 race 检查通过，包括真实空闲计时回收和过期回调回归。本地生成四个插件 ZIP，截图包 SHA-256 与目录一致；未安装到用户数据、未推送或发布。

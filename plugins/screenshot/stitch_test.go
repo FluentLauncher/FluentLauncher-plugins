@@ -110,6 +110,21 @@ func TestLongStitchRejectsAmbiguousRepeatedRows(t *testing.T) {
 	}
 }
 
+func TestLongStitchToleratesSmallRenderingChanges(t *testing.T) {
+	content := scrollFixture(96, 1000)
+	first := fixtureViewport(content, 0, 240, 24, 18)
+	next := fixtureViewport(content, 80, 240, 24, 18)
+	for i := range next.Pix {
+		if i%4 != 3 {
+			next.Pix[i] = uint8(min(255, int(next.Pix[i])+2))
+		}
+	}
+	match, err := findOverlap(first, next)
+	if err != nil || match.shift != 80 {
+		t.Fatalf("rendering changes lost the overlap: %+v, %v", match, err)
+	}
+}
+
 func TestLongThumbnailIncludesAllRetainedSegments(t *testing.T) {
 	content := scrollFixture(96, 1000)
 	s := newStitcher(fixtureViewport(content, 0, 240, 24, 18))

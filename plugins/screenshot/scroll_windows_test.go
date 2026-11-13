@@ -41,10 +41,61 @@ func TestLongStitchRenderedParagraphs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertParagraphStitch(t, content)
+}
+
+func TestLongStitchSmallText(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for _, height := range []int32{9, 12, 16} {
+		for _, quality := range []byte{3, 5} {
+			t.Run(fmt.Sprintf("height%d-quality%d", height, quality), func(t *testing.T) {
+				b, err := newBitmap(image.NewRGBA(image.Rect(0, 0, 800, 2200)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer b.close()
+				dc := call(gdi32, "CreateCompatibleDC", 0)
+				old := call(gdi32, "SelectObject", dc, b.handle)
+				defer func() { call(gdi32, "SelectObject", dc, old); call(gdi32, "DeleteDC", dc) }()
+				fill(dc, image.Rect(0, 0, 800, 2200), 0xffffff)
+				font := logFont{Height: -height, Quality: quality}
+				copy(font.Face[:], windows.StringToUTF16("Segoe UI"))
+				hfont := call(gdi32, "CreateFontIndirectW", ptr(&font))
+				oldFont := call(gdi32, "SelectObject", dc, hfont)
+				defer func() { call(gdi32, "SelectObject", dc, oldFont); call(gdi32, "DeleteObject", hfont) }()
+				call(gdi32, "SetBkMode", dc, 1)
+				for i := range 16 {
+					for line, value := range []string{
+						fmt.Sprintf("Paragraph %02d: scrolling screenshot content %d", i+1, 1037+i*71),
+						"This line checks ordinary text and whitespace overlap without random pixels.",
+						fmt.Sprintf("Data: %08d. Preserve text, line spacing and page whitespace.", i*1234567+314159),
+					} {
+						r := winRect(image.Rect(20, i*130+8+line*35, 780, i*130+38+line*35))
+						call(user32, "DrawTextW", dc, ptr(u16(value)), ^uintptr(0), ptr(&r), 0x20|0x04|0x8000)
+					}
+				}
+				content, err := b.pixels()
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertParagraphStitch(t, content)
+			})
+		}
+	}
+}
+
+func assertParagraphStitch(t *testing.T, content *image.RGBA) {
+	t.Helper()
 	const height, header, footer = 500, 40, 30
 	s := newStitcher(fixtureViewport(content, 0, height, header, footer))
 	for _, offset := range []int{160, 320, 480, 640} {
-		added, err := s.add(fixtureViewport(content, offset, height, header, footer))
+		next := fixtureViewport(content, offset, height, header, footer)
+		match, err := findOverlap(s.last, next)
+		if err != nil || match.shift != 160 {
+			t.Fatalf("text offset %d: overlap %+v, %v", offset, match, err)
+		}
+		added, err := s.add(next)
 		if err != nil || !added {
 			t.Fatalf("text at %d: %v, %v", offset, added, err)
 		}

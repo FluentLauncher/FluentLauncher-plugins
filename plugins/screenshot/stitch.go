@@ -162,11 +162,48 @@ func frameDifference(a, b *image.RGBA) float64 {
 	return sum / 32
 }
 
+// Sparse text can differ only between the 32 sampled columns (for example,
+// paragraph numbers). Verify promising rows across their full width and
+// normalize by content pixels, so whitespace cannot hide a different glyph.
+func detailedRowDistance(a, b *image.RGBA, ay, by int) (float64, bool) {
+	w := a.Rect.Dx()
+	ai := a.PixOffset(a.Rect.Min.X, a.Rect.Min.Y+ay)
+	bi := b.PixOffset(b.Rect.Min.X, b.Rect.Min.Y+by)
+	ap, bp := a.Pix[ai:ai+w*4], b.Pix[bi:bi+w*4]
+	if bytes.Equal(ap, bp) {
+		if bytes.Equal(ap[4:], ap[:len(ap)-4]) {
+			return 0, false
+		}
+		for i := 0; i < len(ap); i += 4 {
+			if max(abs(int(ap[i])-int(ap[0])), abs(int(ap[i+1])-int(ap[1])), abs(int(ap[i+2])-int(ap[2]))) >= 16 {
+				return 0, true
+			}
+		}
+		return 0, false
+	}
+	sum, count := 0, 0
+	for i := 0; i < len(ap); i += 4 {
+		contrast := max(abs(int(ap[i])-int(ap[0])), abs(int(ap[i+1])-int(ap[1])), abs(int(ap[i+2])-int(ap[2])),
+			abs(int(bp[i])-int(bp[0])), abs(int(bp[i+1])-int(bp[1])), abs(int(bp[i+2])-int(bp[2])))
+		if contrast >= 16 {
+			sum += abs(int(ap[i])-int(bp[i])) + abs(int(ap[i+1])-int(bp[i+1])) + abs(int(ap[i+2])-int(bp[i+2]))
+			count++
+		}
+	}
+	if count == 0 {
+		return float64(abs(int(ap[0])-int(bp[0]))+abs(int(ap[1])-int(bp[1]))+abs(int(ap[2])-int(bp[2]))) / 3, false
+	}
+	return float64(sum) / float64(count*3), true
+}
+
 func evaluateShift(a, b *image.RGBA, shift int) overlap {
 	start, hits, bad := 0, 0, 0
 	best := overlap{shift: shift}
 	for y := 0; y < a.Rect.Dy()-shift; y++ {
 		err, textured := rowDistance(a, b, y+shift, y)
+		if err <= 4 {
+			err, textured = detailedRowDistance(a, b, y+shift, y)
+		}
 		if err <= 4 {
 			bad = 0
 			if textured {

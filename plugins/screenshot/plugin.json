@@ -1,7 +1,7 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": ["截图", "screenshot", "snap", "截屏"],

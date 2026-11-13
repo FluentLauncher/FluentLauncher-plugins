@@ -209,7 +209,10 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		if s.dragMode == 0 && s.draft == nil && previousHover >= 0 && s.toolbarHover >= 0 {
 			if previousHover != s.toolbarHover {
 				bar := s.toolbar()
-				r := winRect(image.Rect(bar.Min.X, max(0, bar.Min.Y-px(34, uiScale(s.hwnd))), bar.Max.X, bar.Max.Y))
+				// Centered hints can extend beyond either end of the toolbar.
+				// Repaint their full horizontal band without redrawing the desktop.
+				margin := px(30, uiScale(s.hwnd))
+				r := winRect(image.Rect(0, max(0, bar.Min.Y-margin), s.image.Rect.Dx(), min(s.image.Rect.Dy(), bar.Max.Y+margin)))
 				call(user32, "InvalidateRect", s.hwnd, ptr(&r), 0)
 			}
 			return 0

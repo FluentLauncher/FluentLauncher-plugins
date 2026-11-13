@@ -47,7 +47,8 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 	if s.preferPin {
 		primary = 9
 	}
-	for i, r := range s.toolbarButtons() {
+	buttons := s.toolbarButtons()
+	for i, r := range buttons {
 		color := t.Text
 		id := captureTools[i].id
 		disabled := (id == "undo" && len(s.marks) == 0) || (id == "redo" && len(s.redo) == 0)
@@ -71,16 +72,6 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 			frame(dc, r.Inset(1), t.Accent, 1)
 		}
 	}
-	hintIndex := s.toolbarHover
-	if hintIndex < 0 {
-		hintIndex = s.toolbarFocus
-	}
-	if hintIndex >= 0 {
-		hint := captureTools[hintIndex].label + " · " + captureTools[hintIndex].hint
-		r := image.Rect(bar.Min.X, max(0, bar.Min.Y-px(34, scale)), min(s.image.Rect.Dx(), bar.Min.X+px(205, scale)), max(0, bar.Min.Y-px(34, scale))+px(28, scale))
-		roundPanel(dc, r, px(4, scale), t.Inverse, t.Inverse)
-		text(dc, hint, r, rgbRef(t.InverseText))
-	}
 	if s.tool != "" {
 		for i, r := range s.inkOptions() {
 			if i < 4 {
@@ -97,6 +88,19 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 			}
 		}
 		textAligned(dc, "再次点击工具可调整选区", image.Rect(bar.Min.X+px(220, scale), bar.Min.Y+px(34, scale), bar.Max.X, bar.Max.Y), rgbRef(t.TextMuted), false)
+	}
+	hintIndex := s.toolbarHover
+	if hintIndex < 0 {
+		hintIndex = s.toolbarFocus
+	}
+	if hintIndex >= 0 {
+		hint := captureTools[hintIndex].label + " · " + captureTools[hintIndex].hint
+		button := buttons[hintIndex]
+		monitor := currentMonitor(button.Min.Add(button.Size().Div(2)).Add(s.desktopBounds.Min)).Sub(s.desktopBounds.Min).Intersect(s.image.Bounds())
+		if monitor.Empty() {
+			monitor = s.image.Bounds()
+		}
+		paintToolbarHint(dc, hint, button, monitor, scale, t)
 	}
 }
 

@@ -59,7 +59,7 @@ func TestUnknownToolExplainsItself(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %+v", results)
 	}
-	for _, keyword := range []string{"uuid", "hash"} {
+	for _, keyword := range []string{"json", "hash", "color"} {
 		if !strings.Contains(results[0].Subtitle, keyword) {
 			t.Fatalf("subtitle %q does not list %q", results[0].Subtitle, keyword)
 		}

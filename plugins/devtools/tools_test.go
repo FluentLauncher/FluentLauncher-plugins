@@ -53,12 +53,36 @@ func TestRegex(t *testing.T) {
 	}
 }
 
-func TestTimeAndUUID(t *testing.T) {
-	if outputs := run("time", ""); len(outputs) != 4 {
-		t.Fatalf("time = %+v", outputs)
+func TestColor(t *testing.T) {
+	want := []string{"#3366AA", "#3366aa", "rgb(51, 102, 170)", "hsl(214, 54%, 43%)", "51, 102, 170", "0x3366AA"}
+	for _, input := range []string{"#36a", "3366AA", "rgb(51, 102, 170)", "51 102 170", "rgb 51，102，170"} {
+		outputs := run("color", input)
+		if len(outputs) != len(want) {
+			t.Fatalf("%s = %+v", input, outputs)
+		}
+		for i, text := range want {
+			if outputs[i].Text != text {
+				t.Fatalf("%s row %d = %q, want %q", input, i, outputs[i].Text, text)
+			}
+		}
 	}
-	outputs := run("uuid", "2")
-	if len(outputs) != 1 || len(strings.Split(outputs[0].Text, "\r\n")) != 2 {
-		t.Fatalf("uuid = %+v", outputs)
+	// HSL comes back to the same RGB, within rounding.
+	if outputs := run("color", "hsl(214, 54%, 43%)"); len(outputs) == 0 || outputs[0].Text != "#3266A9" {
+		t.Fatalf("hsl = %+v", outputs)
+	}
+	for _, input := range []string{"rgb(300, 0, 0)", "#12345", "red", ""} {
+		if outputs := run("color", input); len(outputs) != 1 || outputs[0].Text != "" {
+			t.Fatalf("%q = %+v", input, outputs)
+		}
+	}
+}
+
+// Time and UUIDs belong to the launcher's built-in tools; their keywords
+// would never reach the plugin.
+func TestTimeAndUUIDAreGone(t *testing.T) {
+	for _, keyword := range []string{"time", "uuid"} {
+		if outputs := run(keyword, ""); len(outputs) != 1 || outputs[0].Title != "未知工具" {
+			t.Fatalf("%s = %+v", keyword, outputs)
+		}
 	}
 }

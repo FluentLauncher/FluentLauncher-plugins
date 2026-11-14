@@ -2,18 +2,17 @@ package main
 
 import (
 	"crypto/md5"
-	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -34,10 +33,8 @@ func run(keyword, input string) []toolOutput {
 		return []toolOutput{{Title: "输入过长", Subtitle: fmt.Sprintf("最多 %d 个字符，当前 %d 个", maxInput, len([]rune(text)))}}
 	}
 	switch strings.ToLower(keyword) {
-	case "time":
-		return timeTool(text)
-	case "uuid":
-		return uuidTool(text)
+	case "color":
+		return colorTool(text)
 	case "json":
 		return jsonTool(text)
 	case "base64":
@@ -49,7 +46,7 @@ func run(keyword, input string) []toolOutput {
 	case "regex", "regexp", "正则":
 		return regexTool(text)
 	}
-	return []toolOutput{{Title: "未知工具", Subtitle: "可用触发词：time、uuid、json、base64、urlencode、hash、regex"}}
+	return []toolOutput{{Title: "未知工具", Subtitle: "可用触发词：json、base64、urlencode、hash、regex、color"}}
 }
 
 // regexTool matches "regex <pattern> <text>": it lists every match and the
@@ -90,97 +87,6 @@ func regexTool(text string) []toolOutput {
 		outs = append(outs, output("首匹配捕获组", "输入 "+pattern, strings.Join(groups, "  ")))
 	}
 	return outs
-}
-
-func timeTool(text string) []toolOutput {
-	now := time.Now()
-	if text == "" {
-		return []toolOutput{
-			output("当前时间", "本机时区 "+offset(now), now.Format("2006-01-02 15:04:05.000 Z07:00")),
-			output("当前时间（UTC）", "UTC+00:00", now.UTC().Format("2006-01-02 15:04:05.000Z")),
-			output("Unix 秒", "自 1970-01-01 UTC", strconv.FormatInt(now.Unix(), 10)),
-			output("Unix 毫秒", "自 1970-01-01 UTC", strconv.FormatInt(now.UnixMilli(), 10)),
-		}
-	}
-	if number, err := strconv.ParseInt(text, 10, 64); err == nil {
-		milliseconds := number >= 100_000_000_000 || number <= -100_000_000_000
-		var moment time.Time
-		if milliseconds {
-			moment = time.UnixMilli(number)
-		} else {
-			moment = time.Unix(number, 0)
-		}
-		local := moment.Local()
-		label := "秒"
-		if milliseconds {
-			label = "毫秒"
-		}
-		return []toolOutput{
-			output(fmt.Sprintf("%s时间戳 → 本机时区 %s", label, offset(local)), "输入 "+text, local.Format("2006-01-02 15:04:05.000 Z07:00")),
-			output("→ UTC", "UTC+00:00", moment.UTC().Format("2006-01-02 15:04:05.000Z")),
-			output("→ ISO 8601", "带时区偏移", local.Format(time.RFC3339Nano)),
-		}
-	}
-	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02", time.RFC3339Nano} {
-		parsed, err := time.ParseInLocation(layout, text, time.Local)
-		if err != nil {
-			continue
-		}
-		assumed := !strings.ContainsAny(text, "Zz+") && strings.LastIndex(text, "-") <= 7
-		subtitle := "按输入中的时区偏移"
-		if assumed {
-			subtitle = "输入未带时区，按本机时区 " + offset(parsed) + " 解释"
-		}
-		return []toolOutput{
-			output("Unix 秒", subtitle, strconv.FormatInt(parsed.Unix(), 10)),
-			output("Unix 毫秒", subtitle, strconv.FormatInt(parsed.UnixMilli(), 10)),
-			output("→ UTC", "UTC+00:00", parsed.UTC().Format("2006-01-02 15:04:05.000Z")),
-		}
-	}
-	return []toolOutput{{Title: "无法识别时间", Subtitle: "支持 Unix 秒/毫秒，或 2026-11-06 18:30 这类日期时间"}}
-}
-
-func offset(t time.Time) string {
-	_, seconds := t.Zone()
-	sign := "+"
-	if seconds < 0 {
-		sign = "-"
-		seconds = -seconds
-	}
-	return fmt.Sprintf("%s%02d:%02d", sign, seconds/3600, seconds%3600/60)
-}
-
-func uuidTool(text string) []toolOutput {
-	count := 1
-	if value, err := strconv.Atoi(text); err == nil {
-		count = min(max(value, 1), 20)
-	}
-	values := make([]string, count)
-	for i := range values {
-		values[i] = newUUID()
-	}
-	subtitle := "随机生成"
-	if count > 1 {
-		subtitle = fmt.Sprintf("%d 个，随机生成", count)
-	}
-	results := []toolOutput{output("UUID v4", subtitle, strings.Join(values, "\r\n"))}
-	if count == 1 {
-		results = append(results,
-			output("无连字符", "32 位十六进制", strings.ReplaceAll(values[0], "-", "")),
-			output("大写", "常见于注册表与配置", strings.ToUpper(values[0])))
-	}
-	return results
-}
-
-func newUUID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return ""
-	}
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	encoded := hex.EncodeToString(b[:])
-	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
 }
 
 func jsonTool(text string) []toolOutput {
@@ -349,6 +255,117 @@ func hashTool(text string) []toolOutput {
 		output("SHA-1", "仅用于兼容旧系统，不要用于安全校验", hex.EncodeToString(sum1[:])),
 		output("MD5", "仅用于兼容旧系统，不要用于安全校验", hex.EncodeToString(sumMD5[:])),
 	}
+}
+
+var (
+	hexColorRe = regexp.MustCompile(`^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+	rgbColorRe = regexp.MustCompile(`(?i)^(?:rgba?\s*\(?)?\s*(\d{1,3})\s*[,，\s]\s*(\d{1,3})\s*[,，\s]\s*(\d{1,3})\s*\)?$`)
+	hslColorRe = regexp.MustCompile(`(?i)^hsla?\s*\(?\s*(\d{1,3}(?:\.\d+)?)\s*(?:deg)?\s*[,，\s]\s*(\d{1,3}(?:\.\d+)?)%?\s*[,，\s]\s*(\d{1,3}(?:\.\d+)?)%?\s*\)?$`)
+)
+
+// colorTool reads "#36a", "#3366AA", "rgb(51, 102, 170)", "51 102 170" or
+// "hsl(214, 54%, 43%)" and lists the color in each notation.
+func colorTool(text string) []toolOutput {
+	if text == "" {
+		return []toolOutput{{Title: "等待输入", Subtitle: "输入 color 后跟 #3366AA、rgb(51, 102, 170) 或 hsl(214, 54%, 43%)"}}
+	}
+	r, g, b, ok := parseColor(text)
+	if !ok {
+		return []toolOutput{{Title: "无法识别颜色", Subtitle: "支持 #RGB、#RRGGBB、rgb(r, g, b) 与 hsl(h, s%, l%)"}}
+	}
+	h, sat, l := rgbToHSL(r, g, b)
+	hexValue := fmt.Sprintf("#%02X%02X%02X", r, g, b)
+	return []toolOutput{
+		output("HEX", "大写，CSS 与设计工具通用", hexValue),
+		output("hex", "小写", strings.ToLower(hexValue)),
+		output("RGB", "CSS rgb()", fmt.Sprintf("rgb(%d, %d, %d)", r, g, b)),
+		output("HSL", "CSS hsl()", fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, sat, l)),
+		output("RGB 分量", "逗号分隔", fmt.Sprintf("%d, %d, %d", r, g, b)),
+		output("0xRRGGBB", "代码中的整数常量", "0x"+hexValue[1:]),
+	}
+}
+
+func parseColor(text string) (int, int, int, bool) {
+	if m := hexColorRe.FindStringSubmatch(text); m != nil {
+		digits := m[1]
+		if len(digits) == 3 {
+			digits = string([]byte{digits[0], digits[0], digits[1], digits[1], digits[2], digits[2]})
+		}
+		v, err := strconv.ParseUint(digits, 16, 32)
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		return int(v >> 16 & 0xff), int(v >> 8 & 0xff), int(v & 0xff), true
+	}
+	if m := hslColorRe.FindStringSubmatch(text); m != nil {
+		h, _ := strconv.ParseFloat(m[1], 64)
+		sat, _ := strconv.ParseFloat(m[2], 64)
+		l, _ := strconv.ParseFloat(m[3], 64)
+		if h > 360 || sat > 100 || l > 100 {
+			return 0, 0, 0, false
+		}
+		r, g, b := hslToRGB(h, sat/100, l/100)
+		return r, g, b, true
+	}
+	if m := rgbColorRe.FindStringSubmatch(text); m != nil {
+		r, _ := strconv.Atoi(m[1])
+		g, _ := strconv.Atoi(m[2])
+		b, _ := strconv.Atoi(m[3])
+		if r > 255 || g > 255 || b > 255 {
+			return 0, 0, 0, false
+		}
+		return r, g, b, true
+	}
+	return 0, 0, 0, false
+}
+
+func rgbToHSL(r, g, b int) (int, int, int) {
+	rf, gf, bf := float64(r)/255, float64(g)/255, float64(b)/255
+	mx := math.Max(rf, math.Max(gf, bf))
+	mn := math.Min(rf, math.Min(gf, bf))
+	l := (mx + mn) / 2
+	if mx == mn {
+		return 0, 0, int(math.Round(l * 100))
+	}
+	d := mx - mn
+	s := d / (1 - math.Abs(2*l-1))
+	var h float64
+	switch mx {
+	case rf:
+		h = math.Mod((gf-bf)/d, 6)
+	case gf:
+		h = (bf-rf)/d + 2
+	default:
+		h = (rf-gf)/d + 4
+	}
+	h *= 60
+	if h < 0 {
+		h += 360
+	}
+	return int(math.Round(h)), int(math.Round(s * 100)), int(math.Round(l * 100))
+}
+
+func hslToRGB(h, s, l float64) (int, int, int) {
+	c := (1 - math.Abs(2*l-1)) * s
+	x := c * (1 - math.Abs(math.Mod(h/60, 2)-1))
+	m := l - c/2
+	var r, g, b float64
+	switch {
+	case h < 60:
+		r, g = c, x
+	case h < 120:
+		r, g = x, c
+	case h < 180:
+		g, b = c, x
+	case h < 240:
+		g, b = x, c
+	case h < 300:
+		r, b = x, c
+	default:
+		r, b = c, x
+	}
+	round := func(v float64) int { return int(math.Round((v + m) * 255)) }
+	return round(r), round(g), round(b)
 }
 
 func output(title, subtitle, text string) toolOutput {

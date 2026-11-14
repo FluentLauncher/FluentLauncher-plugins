@@ -32,21 +32,21 @@
       "zh-Hant": "開發工具"
     },
     "summary": {
-      "zh-Hans": "离线文本工具：时间戳与时区、UUID、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要。",
-      "en": "Offline text tools: timestamps and time zones, UUIDs, JSON validation and formatting, Base64 and URL codecs, regex matching, digests.",
-      "zh-Hant": "離線文字工具：時間戳與時區、UUID、JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要。"
+      "zh-Hans": "离线文本工具：JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要、颜色格式转换。",
+      "en": "Offline text tools: JSON validation and formatting, Base64 and URL codecs, regex matching, digests, color notations.",
+      "zh-Hant": "離線文字工具：JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要、顏色格式轉換。"
     },
     "author": "FluentLauncher",
     "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
     "description": {
-      "zh-Hans": "离线文本工具：时间戳与时区、UUID、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要。",
-      "en": "Offline text tools: timestamps and time zones, UUIDs, JSON validation and formatting, Base64 and URL codecs, regex matching, digests.",
-      "zh-Hant": "離線文字工具：時間戳與時區、UUID、JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要。"
+      "zh-Hans": "离线文本工具：JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、摘要、颜色格式转换。",
+      "en": "Offline text tools: JSON validation and formatting, Base64 and URL codecs, regex matching, digests, color notations.",
+      "zh-Hant": "離線文字工具：JSON 驗證與格式化、Base64 與 URL 編解碼、正則匹配、摘要、顏色格式轉換。"
     },
     "usage": {
-      "zh-Hans": "输入 json 加文本进行格式化；hash abc 生成摘要；uuid 生成标识符。",
-      "en": "Use json with text to format JSON, hash abc to create digests, or uuid to generate an identifier.",
-      "zh-Hant": "輸入 json 加文字進行格式化；hash abc 產生摘要；uuid 產生識別碼。"
+      "zh-Hans": "输入 json 加文本进行格式化；hash abc 生成摘要；color #36a 转换颜色格式。",
+      "en": "Use json with text to format JSON, hash abc to create digests, or color #36a to convert a color.",
+      "zh-Hant": "輸入 json 加文字進行格式化；hash abc 產生摘要；color #36a 轉換顏色格式。"
     }
   },
   {

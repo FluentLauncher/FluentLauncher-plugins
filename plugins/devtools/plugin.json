@@ -1,20 +1,19 @@
 {
   "id": "official.devtools",
   "name": "开发工具",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "protocolVersion": 1,
   "executable": "devtools.exe",
   "keywords": [
-    "time",
-    "uuid",
     "json",
     "base64",
     "urlencode",
     "hash",
-    "regex"
+    "regex",
+    "color"
   ],
   "permissions": [],
-  "description": "离线文本工具：时间戳与时区换算、UUID 生成、JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、SHA-256/SHA-1/MD5 摘要。只做文本转换，不执行输入中的任何代码，不访问网络。",
+  "description": "离线文本工具：JSON 校验与格式化、Base64 与 URL 编解码、正则匹配、SHA-256/SHA-1/MD5 摘要、颜色格式转换。只做文本转换，不执行输入中的任何代码，不访问网络。时间、时间戳与 UUID 由启动器内置工具提供。",
   "commands": [
     {
       "id": "show-tools",
@@ -22,11 +21,11 @@
       "scope": "global",
       "defaultShortcuts": [],
       "activation": "showQuery",
-      "query": "uuid "
+      "query": "json "
     }
   ],
   "icon": "assets/icon.png",
   "author": "FluentLauncher",
   "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
-  "usage": "输入 json 加文本进行格式化；hash abc 生成摘要；uuid 生成标识符。"
+  "usage": "输入 json 加文本进行格式化；hash abc 生成摘要；color #36a 转换颜色格式。"
 }

@@ -36,7 +36,7 @@ type recordItem struct {
 	id, label, icon, hint string
 	width                 int
 	disabled, danger      bool
-	primary               bool
+	primary, active       bool
 }
 
 // recordWindow is the control bar next to the recorded region. It and the
@@ -71,6 +71,14 @@ type recordWindow struct {
 	dragBar       image.Rectangle
 	dragRegion    image.Rectangle
 	paintBuffer   paintBuffer
+
+	// Marks drawn over the live region; see record_marks_windows.go.
+	overlay     uintptr
+	markSurface *dibSurface
+	markPixels  []byte
+	tool        string
+	marks       []annotation
+	draft       *annotation
 }
 
 // startRecording opens the control bar for a physical-pixel desktop region.
@@ -174,6 +182,7 @@ func (w *recordWindow) close(discard bool) {
 	}
 	call(user32, "KillTimer", w.hwnd, recordCountdownTimer)
 	call(user32, "KillTimer", w.hwnd, recordRefreshTimer)
+	w.closeMarks()
 	call(user32, "DestroyWindow", w.hwnd)
 	if w.outline != 0 {
 		call(user32, "DestroyWindow", w.outline)
@@ -274,6 +283,7 @@ func (w *recordWindow) finished(rec *recorder) {
 	}
 	call(user32, "DestroyWindow", w.outline)
 	w.outline = 0
+	w.closeMarks()
 	w.d.capturing.Store(false)
 	w.setState(recordDone)
 }
@@ -345,7 +355,15 @@ func (w *recordWindow) items() []recordItem {
 			action.disabled, pause.disabled, cancel.disabled = true, true, true
 		}
 	}
-	return []recordItem{grip, clock, format, fps, third, action, pause, audio, sep, move, cancel}
+	items := []recordItem{grip, clock, format, fps, third, action, pause, audio, sep}
+	saving := w.state == recordSaving
+	for _, tool := range recordMarkTools {
+		tool.active, tool.disabled = tool.id == w.tool, saving
+		items = append(items, tool)
+	}
+	none := len(w.marks) == 0 || saving
+	return append(items, recordItem{id: "undo", icon: "undo", hint: "撤销上一个标注", width: 32, disabled: none},
+		recordItem{id: "clear", icon: "eraser", hint: "清除全部标注", width: 32, disabled: none}, sep, move, cancel)
 }
 
 func (w *recordWindow) barSize() image.Point {
@@ -488,12 +506,12 @@ func (w *recordWindow) draw(dc uintptr) {
 		switch {
 		case disabled:
 			fg = t.TextMuted
-		case it.primary:
+		case it.primary, it.active:
 			bg, fg = t.Accent, t.AccentText
 		case it.danger:
 			fg = t.Danger
 		}
-		if i == w.hover && it.id != "" && !disabled && !it.primary {
+		if i == w.hover && it.id != "" && !disabled && !it.primary && !it.active {
 			bg = t.SurfaceHover
 			if it.id == "cancel" {
 				fg = t.Danger
@@ -552,6 +570,7 @@ func (w *recordWindow) drag() {
 		delta.Y = max(desktop.Min.Y-r.Min.Y, min(delta.Y, desktop.Max.Y-r.Max.Y))
 		w.region = r.Add(delta)
 		windowAt(w.outline, w.region.Inset(-sourceFrameWidth), false)
+		w.renderMarks() // marks are region-local and move along
 	}
 	bar := w.dragBar.Add(delta)
 	if !w.excluded && bar.Overlaps(w.region) {
@@ -715,6 +734,13 @@ func (w *recordWindow) activate(id string) {
 				p.GIFFPS = nextOption(gifFPSOptions, p.GIFFPS)
 			}
 		})
+	case "rect", "pen", "arrow", "number":
+		w.selectTool(id)
+	case "undo":
+		w.undoMark()
+	case "clear":
+		w.marks = nil
+		w.syncMarks()
 	case "audio":
 		r := w.itemBounds()[w.itemIndex("audio")]
 		w.d.showMenu(w.hwnd, w.bounds.Min.Add(image.Pt(r.Min.X, w.barLocal().Max.Y+px(4, uiScale(w.hwnd)))), []menuItem{

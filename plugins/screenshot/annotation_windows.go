@@ -47,6 +47,31 @@ func (m annotation) draw(dc uintptr, source *image.RGBA, offset image.Point) {
 			end := b.Sub(image.Pt(int(length*math.Cos(angle+turn)), int(length*math.Sin(angle+turn))))
 			line(dc, b, end, m.color, m.width)
 		}
+	case "number":
+		radius := max(11, m.width*4)
+		brush, pen := call(gdi32, "CreateSolidBrush", rgbRef(m.color)), call(gdi32, "CreatePen", 0, 1, rgbRef(m.color))
+		oldBrush, oldPen := call(gdi32, "SelectObject", dc, brush), call(gdi32, "SelectObject", dc, pen)
+		call(gdi32, "Ellipse", dc, coord(a.X-radius), coord(a.Y-radius), coord(a.X+radius+1), coord(a.Y+radius+1))
+		call(gdi32, "SelectObject", dc, oldBrush)
+		call(gdi32, "SelectObject", dc, oldPen)
+		call(gdi32, "DeleteObject", brush)
+		call(gdi32, "DeleteObject", pen)
+		// Unsmoothed glyphs keep exact colors on the keyed recording overlay.
+		font := logFont{Height: -int32(radius * 5 / 4), Weight: 700, Quality: 3}
+		face, _ := windows.UTF16FromString("Segoe UI")
+		copy(font.Face[:], face)
+		h := call(gdi32, "CreateFontIndirectW", ptr(&font))
+		old := call(gdi32, "SelectObject", dc, h)
+		label := uint32(0xffffff)
+		if (m.color>>16&255)*3+(m.color>>8&255)*6+m.color&255 > 1600 {
+			label = 0
+		}
+		call(gdi32, "SetBkMode", dc, 1)
+		call(gdi32, "SetTextColor", dc, rgbRef(label))
+		wr := winRect(image.Rect(a.X-radius, a.Y-radius, a.X+radius+1, a.Y+radius+1))
+		call(user32, "DrawTextW", dc, ptr(u16(m.text)), ^uintptr(0), ptr(&wr), 0x01|0x04|0x20|0x800)
+		call(gdi32, "SelectObject", dc, old)
+		call(gdi32, "DeleteObject", h)
 	case "pen":
 		for i := 1; i < len(m.points); i++ {
 			line(dc, m.points[i-1].Sub(offset), m.points[i].Sub(offset), m.color, m.width)

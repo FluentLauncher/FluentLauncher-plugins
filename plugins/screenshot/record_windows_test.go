@@ -255,7 +255,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 			t.Fatal("the record button is not the default focus")
 		}
 		w.handle(wmKeyDown, 0x09, 0)
-		if w.items()[w.focus].id != "move" || !w.keyboard {
+		if w.items()[w.focus].id != "rect" || !w.keyboard { // pause and GIF sound are disabled
 			t.Fatalf("Tab moved the focus to %q", w.items()[w.focus].id)
 		}
 		fps := d.preferences.Recording.GIFFPS
@@ -374,6 +374,69 @@ func TestNativeRecordingFlow(t *testing.T) {
 	}
 	w.toggleAudio(true)
 	w.toggleAudio(false)
+	// Marks: drawn through the overlay's own messages, visible to a screen
+	// capture, click-through again once the tool is released.
+	point := func(x, y int) uintptr { return uintptr(uint32(y)<<16 | uint32(x)) }
+	exstyle := func() uintptr { return call(user32, "GetWindowLongPtrW", w.overlay, coord(-20)) }
+	if item("undo").focusable() || item("clear").focusable() || w.overlay != 0 {
+		t.Fatal("marks before any tool")
+	}
+	w.activate("rect")
+	if !item("rect").active || w.overlay == 0 || exstyle()&wsExTransparent != 0 || exstyle()&wsExNoactivate == 0 || w.handleMarks(0x0021, 0, 0) != 3 {
+		t.Fatal("an active tool must take the mouse without taking focus")
+	}
+	w.handleMarks(wmLButtonDown, 0, point(40, 30))
+	w.handleMarks(wmMouseMove, 0, point(200, 120))
+	w.handleMarks(wmLButtonUp, 0, point(200, 120))
+	w.handleMarks(wmLButtonDown, 0, point(60, 60)) // a click without movement adds nothing
+	w.handleMarks(wmLButtonUp, 0, point(60, 60))
+	w.activate("number")
+	w.handleMarks(wmLButtonDown, 0, point(260, 60))
+	w.handleMarks(wmLButtonDown, 0, point(260, 140))
+	if len(w.marks) != 3 || w.marks[2].text != "2" || !item("undo").focusable() {
+		t.Fatalf("marks %+v", w.marks)
+	}
+	w.activate("undo")
+	w.handleMarks(wmRButtonUp, 0, 0)
+	if len(w.marks) != 2 || w.tool != "" || exstyle()&wsExTransparent == 0 {
+		t.Fatal("undo / leaving the tool")
+	}
+	snapshot("record-marks-bar")
+	for i := 0; i < 10; i++ {
+		pumpRecordMessages(t, d, func() bool { return true })
+		call(dwmapi, "DwmFlush")
+	}
+	shot, err := captureScreen(w.region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ink := d.theme.Danger
+	for _, p := range []image.Point{{40, 30}, {120, 31}, {198, 118}, {250, 60}} {
+		if c := shot.RGBAAt(p.X, p.Y); uint32(c.R)<<16|uint32(c.G)<<8|uint32(c.B) != ink {
+			t.Fatalf("mark pixel %v = %v, want %06x", p, c, ink)
+		}
+	}
+	// Moving the region carries the marks; clearing hides the overlay.
+	w.dragMode, w.dragStart, w.dragBar, w.dragRegion = 2, cursorPoint().Sub(image.Pt(10, 6)), w.bar, w.region
+	w.drag()
+	w.dragMode = 0
+	var moved rect
+	call(user32, "GetWindowRect", w.overlay, ptr(&moved))
+	if moved.image() != w.region {
+		t.Fatalf("overlay %v, region %v", moved.image(), w.region)
+	}
+	w.activate("clear")
+	if len(w.marks) != 0 || call(user32, "IsWindowVisible", w.overlay) != 0 {
+		t.Fatal("clear must hide the overlay")
+	}
+	w.activate("pen")
+	w.handleMarks(wmLButtonDown, 0, point(20, 20))
+	w.handleMarks(wmMouseMove, 0, point(30, 40))
+	w.handleMarks(wmMouseMove, 0, point(50, 45))
+	w.handleMarks(wmLButtonUp, 0, point(50, 45))
+	if len(w.marks) != 1 || len(w.marks[0].points) != 4 {
+		t.Fatalf("pen stroke %+v", w.marks)
+	}
 	snapshot("record-mp4-setup")
 	w.activate("start")
 	began := time.Now()
@@ -387,6 +450,9 @@ func TestNativeRecordingFlow(t *testing.T) {
 	w.activate("stop")
 	pumpRecordMessages(t, d, func() bool { return w.state == recordDone })
 	data, err := os.ReadFile(w.path)
+	if w.overlay != 0 || w.tool != "" {
+		t.Fatal("marks must be gone once the recording is saved")
+	}
 	if err != nil || !strings.HasSuffix(w.path, ".mp4") || len(data) < 1000 || string(data[4:8]) != "ftyp" || w.format != "mp4" {
 		t.Fatalf("mp4 result %q: %v", w.path, err)
 	}

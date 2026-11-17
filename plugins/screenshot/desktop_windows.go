@@ -50,7 +50,7 @@ func newDesktop() (*desktop, error) {
 	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline", "FLScreenshotRecord"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline", "FLScreenshotRecord", "FLScreenshotMarks"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
@@ -135,6 +135,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	}
 	if w := d.recording; w != nil && hwnd == w.hwnd {
 		return w.handle(msg, wparam, lparam)
+	}
+	if w := d.recording; w != nil && hwnd == w.overlay {
+		return w.handleMarks(msg, wparam, lparam)
 	}
 	if w := d.recording; w != nil && hwnd == w.outline {
 		return outlineMessage(hwnd, w.region, w.drawOutline, msg, wparam, lparam)

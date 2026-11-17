@@ -38,6 +38,7 @@ type desktop struct {
 	// Tests replace the recorded frames and the output folder; empty uses the desktop and the Videos folder.
 	recordSource func(region image.Rectangle, out image.Point) (frameSource, error)
 	recordDir    string
+	recordAudio  func(loopback bool) (audioSource, error)
 }
 
 // Accessed only on the locked GUI thread, including synchronous Win32 callbacks.

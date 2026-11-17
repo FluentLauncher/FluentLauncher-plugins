@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,7 @@ type recordWindow struct {
 	rec           *recorder
 	path          string
 	fileSize      int64
+	format        string // of the recording in progress or finished
 	limited       bool
 	busy          bool
 	keyboard      bool // Tab was used: describe the focused item
@@ -205,8 +207,8 @@ func (w *recordWindow) start() {
 		return
 	}
 	call(user32, "KillTimer", w.hwnd, recordCountdownTimer)
-	prefs, region := w.d.preferences.Recording, w.region
-	out := recordOutputSize(region.Size(), prefs.GIFScale)
+	prefs := w.d.preferences.Recording
+	region, out := recordFrame(w.region, prefs.Scale, prefs.mp4())
 	open := func() (frameSource, error) { return newScreenSource(region, out, prefs.Cursor) }
 	if w.d.recordSource != nil {
 		open = func() (frameSource, error) { return w.d.recordSource(region, out) }
@@ -220,8 +222,28 @@ func (w *recordWindow) start() {
 			return
 		}
 	}
-	rec := newRecorder(open, dir, prefs.GIFFPS, time.Duration(prefs.GIFMaxSeconds)*time.Second)
-	w.rec = rec
+	rec := newRecorder(open, dir, prefs.fps(), prefs.limit())
+	if prefs.mp4() {
+		openAudio := openWASAPI
+		if w.d.recordAudio != nil {
+			openAudio = w.d.recordAudio
+		}
+		for _, track := range []struct {
+			enabled, loopback bool
+			volume            int
+		}{{prefs.SystemAudio, true, prefs.SystemVolume}, {prefs.Microphone, false, prefs.MicVolume}} {
+			if track.enabled {
+				rec.audio = append(rec.audio, func() (audioSource, error) { return openAudio(track.loopback) })
+				rec.volumes = append(rec.volumes, track.volume)
+			}
+		}
+		sound := len(rec.audio) > 0
+		rec.extension = "mp4"
+		rec.encoder = func(path string, size image.Point) (recordEncoder, error) {
+			return newMP4Writer(path, size, prefs.MP4FPS, sound)
+		}
+	}
+	w.rec, w.format = rec, prefs.Format
 	w.setState(recordRunning)
 	call(user32, "SetTimer", w.hwnd, recordRefreshTimer, 250, 0)
 	// Hand the keyboard back, so the recorded app looks and behaves active.
@@ -285,8 +307,20 @@ func (w *recordWindow) items() []recordItem {
 	}
 	setup := w.state == recordSetup
 	clock := recordItem{label: "00:00", width: 50}
-	fps := recordItem{id: "fps", label: fmt.Sprintf("%dFPS", prefs.GIFFPS), hint: "帧率 · 点击切换 10 / 15 / 20", width: 50, disabled: !setup}
-	third := recordItem{id: "scale", label: fmt.Sprintf("%d%%", prefs.GIFScale), hint: "画面缩放 · 点击切换 100% / 75% / 50%", width: 58, disabled: !setup}
+	format := recordItem{id: "format", label: "MP4", hint: "格式 · 点击切换 MP4（可带声音）/ GIF", width: 44, disabled: !setup}
+	fps := recordItem{id: "fps", label: fmt.Sprintf("%dFPS", prefs.fps()), hint: "帧率 · 点击切换 15 / 30 / 60", width: 50, disabled: !setup}
+	audio := recordItem{id: "audio", icon: "speaker", width: 32, disabled: !setup}
+	switch {
+	case !prefs.mp4():
+		format.label, fps.hint = "GIF", "帧率 · 点击切换 10 / 15 / 20"
+		audio.icon, audio.hint, audio.disabled = "mute", "GIF 没有声音；切换到 MP4 后可录制系统声音和麦克风", true
+	case !prefs.SystemAudio && !prefs.Microphone:
+		audio.icon, audio.hint = "mute", "声音 · 未录制，点击选择系统声音或麦克风"
+	default:
+		state := map[bool]string{true: "开", false: "关"}
+		audio.hint = fmt.Sprintf("声音 · 系统声音 %s，麦克风 %s", state[prefs.SystemAudio], state[prefs.Microphone])
+	}
+	third := recordItem{id: "scale", label: fmt.Sprintf("%d%%", prefs.Scale), hint: "画面缩放 · 点击切换 100% / 75% / 50%", width: 58, disabled: !setup}
 	action := recordItem{id: "start", icon: "record", hint: "开始录制 · Enter", width: 32, danger: true}
 	pause := recordItem{id: "pause", icon: "pause", hint: "暂停录制", width: 32, disabled: true}
 	move := recordItem{id: "move", icon: "move", hint: "按住拖动，移动录制区域", width: 32, disabled: !setup}
@@ -297,7 +331,7 @@ func (w *recordWindow) items() []recordItem {
 		action.hint = "跳过倒计时，立即开始"
 	case recordRunning, recordSaving:
 		elapsed := time.Duration(w.rec.elapsed.Load())
-		limit := time.Duration(prefs.GIFMaxSeconds) * time.Second
+		limit := prefs.limit()
 		clock.label, clock.danger = formatClock(elapsed), limit-elapsed <= 10*time.Second
 		third = recordItem{label: formatSize(w.rec.bytes.Load()), width: 58, disabled: true}
 		action = recordItem{id: "stop", icon: "stop", hint: fmt.Sprintf("停止并保存 · 最长 %s", formatClock(limit)), width: 32, danger: true}
@@ -311,7 +345,7 @@ func (w *recordWindow) items() []recordItem {
 			action.disabled, pause.disabled, cancel.disabled = true, true, true
 		}
 	}
-	return []recordItem{grip, clock, fps, third, action, pause, sep, move, cancel}
+	return []recordItem{grip, clock, format, fps, third, action, pause, audio, sep, move, cancel}
 }
 
 func (w *recordWindow) barSize() image.Point {
@@ -641,23 +675,56 @@ func (w *recordWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 	return call(user32, "DefWindowProcW", w.hwnd, msg, wparam, lparam)
 }
 
+// change applies and saves a setup choice, or reports why it was not kept.
+func (w *recordWindow) change(apply func(*recordPreferences)) {
+	previous := w.d.preferences.Recording
+	apply(&w.d.preferences.Recording)
+	if err := savePreferences(w.d.preferences); err != nil {
+		w.d.preferences.Recording = previous
+		w.d.report(w.hwnd, err)
+	}
+	invalidate(w.hwnd)
+}
+
+func (w *recordWindow) toggleAudio(system bool) {
+	w.change(func(p *recordPreferences) {
+		if system {
+			p.SystemAudio = !p.SystemAudio
+		} else {
+			p.Microphone = !p.Microphone
+		}
+	})
+}
+
 func (w *recordWindow) activate(id string) {
 	if w.busy || w.state == recordSaving {
 		return
 	}
-	prefs := &w.d.preferences.Recording
+	prefs := w.d.preferences.Recording
 	switch id {
-	case "fps", "scale":
-		previous := *prefs
-		if id == "fps" {
-			prefs.GIFFPS = nextOption(gifFPSOptions, prefs.GIFFPS)
-		} else {
-			prefs.GIFScale = nextOption(gifScaleOptions, prefs.GIFScale)
-		}
-		if err := savePreferences(w.d.preferences); err != nil {
-			*prefs = previous
-			w.d.report(w.hwnd, err)
-		}
+	case "format", "fps", "scale":
+		w.change(func(p *recordPreferences) {
+			switch {
+			case id == "format":
+				p.Format = map[bool]string{true: "gif", false: "mp4"}[p.mp4()]
+			case id == "scale":
+				p.Scale = nextOption(scaleOptions, p.Scale)
+			case p.mp4():
+				p.MP4FPS = nextOption(mp4FPSOptions, p.MP4FPS)
+			default:
+				p.GIFFPS = nextOption(gifFPSOptions, p.GIFFPS)
+			}
+		})
+	case "audio":
+		r := w.itemBounds()[w.itemIndex("audio")]
+		w.d.showMenu(w.hwnd, w.bounds.Min.Add(image.Pt(r.Min.X, w.barLocal().Max.Y+px(4, uiScale(w.hwnd)))), []menuItem{
+			{ID: 1, Label: "录制系统声音", Icon: "speaker", Checked: prefs.SystemAudio},
+			{ID: 2, Label: "录制麦克风", Icon: "speaker", Checked: prefs.Microphone},
+		}, func(choice int) {
+			if w.d.recording == w && w.state == recordSetup {
+				w.toggleAudio(choice == 1)
+			}
+		})
 	case "start":
 		w.start()
 	case "pause":
@@ -680,7 +747,7 @@ func (w *recordWindow) activate(id string) {
 	case "copy":
 		w.d.report(w.hwnd, copyFileDrop(w.hwnd, w.path))
 	case "save":
-		target, err := chooseSave(w.hwnd, "另存录制", filepath.Base(w.path), filepath.Dir(w.path), "GIF", "gif")
+		target, err := chooseSave(w.hwnd, "另存录制", filepath.Base(w.path), filepath.Dir(w.path), strings.ToUpper(w.format), w.format)
 		if err != nil || target == "" || target == w.path {
 			w.d.report(w.hwnd, err)
 			break

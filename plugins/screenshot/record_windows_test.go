@@ -204,6 +204,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 	d.recordDir = t.TempDir()
 	d.recordSource = func(_ image.Rectangle, out image.Point) (frameSource, error) { return &sweepSource{out: out}, nil }
 	d.preferences.Recording.Countdown = false
+	d.preferences.Recording.Format = "gif"
 	monitor := currentMonitor(cursorPoint())
 	region := image.Rectangle{Min: monitor.Min.Add(image.Pt(60, 60)), Max: monitor.Min.Add(image.Pt(380, 260))}
 	artifacts := os.Getenv("FL_SCREENSHOT_ARTIFACT_DIR")
@@ -245,7 +246,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 		}
 		w.activate("fps")
 		w.activate("scale")
-		if p := loadPreferences().Recording; p.GIFFPS != d.preferences.Recording.GIFFPS || p.GIFScale != d.preferences.Recording.GIFScale {
+		if p := loadPreferences().Recording; p.GIFFPS != d.preferences.Recording.GIFFPS || p.Scale != d.preferences.Recording.Scale {
 			t.Fatal("setup choices were not saved")
 		}
 		snapshot("record-" + name + "-setup")
@@ -299,7 +300,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := recordOutputSize(region.Size(), d.preferences.Recording.GIFScale)
+		want := recordOutputSize(region.Size(), d.preferences.Recording.Scale)
 		if decoded, frames := composeGIF(t, data); len(frames) < 3 || decoded.Config.Width != want.X || decoded.Config.Height != want.Y {
 			t.Fatalf("recorded %d frames at %d×%d, want %v", len(frames), decoded.Config.Width, decoded.Config.Height, want)
 		}
@@ -348,8 +349,50 @@ func TestNativeRecordingFlow(t *testing.T) {
 	if finished, partial := recordedFiles(t, d.recordDir); len(finished) != 1 || len(partial) != 0 {
 		t.Fatalf("shutdown kept %v %v", finished, partial)
 	}
-	if len(reported) != 1 {
-		t.Fatal("unexpected errors:", reported)
+
+	// MP4 with sound through the bar: format and audio choices, then a real encode.
+	d.recordDir = t.TempDir()
+	d.recordAudio = func(bool) (audioSource, error) { return &toneSource{}, nil }
+	d.startRecording(region.Add(image.Pt(1, 1)).Inset(-1), 0) // 322×202 stays even, the origin is odd
+	w = d.recording
+	item := func(id string) recordItem { return w.items()[w.itemIndex(id)] }
+	if !item("audio").disabled || item("format").label != "GIF" {
+		t.Fatal("GIF must not offer sound")
+	}
+	w.activate("format")
+	if !d.preferences.Recording.mp4() || item("audio").disabled || item("fps").label != "30FPS" || !loadPreferences().Recording.mp4() {
+		t.Fatalf("format switch: %+v", d.preferences.Recording)
+	}
+	w.toggleAudio(false)
+	if !d.preferences.Recording.Microphone || !strings.Contains(item("audio").hint, "麦克风 开") {
+		t.Fatal("microphone choice")
+	}
+	w.toggleAudio(true)
+	w.toggleAudio(false)
+	if item("audio").icon != "mute" {
+		t.Fatal("no sound selected must show the muted icon")
+	}
+	w.toggleAudio(true)
+	w.toggleAudio(false)
+	snapshot("record-mp4-setup")
+	w.activate("start")
+	began := time.Now()
+	pumpRecordMessages(t, d, func() bool { return w.rec.elapsed.Load() > 0 })
+	t.Logf("MP4 encoder accepted the first frame after %v", time.Since(began).Round(time.Millisecond))
+	pumpRecordMessages(t, d, func() bool { return w.rec.elapsed.Load() > int64(600*time.Millisecond) })
+	if len(w.rec.audio) != 2 || item("format").focusable() || item("audio").focusable() {
+		t.Fatal("running MP4 state")
+	}
+	snapshot("record-mp4-running")
+	w.activate("stop")
+	pumpRecordMessages(t, d, func() bool { return w.state == recordDone })
+	data, err := os.ReadFile(w.path)
+	if err != nil || !strings.HasSuffix(w.path, ".mp4") || len(data) < 1000 || string(data[4:8]) != "ftyp" || w.format != "mp4" {
+		t.Fatalf("mp4 result %q: %v", w.path, err)
+	}
+	w.close(false)
+	if len(reported) != 1 || d.active.Load() != 0 {
+		t.Fatal("unexpected errors:", reported, d.active.Load())
 	}
 }
 

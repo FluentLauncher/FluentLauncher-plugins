@@ -82,21 +82,21 @@
       "zh-Hant": "截圖與貼圖"
     },
     "summary": {
-      "zh-Hans": "截图标注、长截图与 GIF 录制：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
-      "en": "Annotate, record GIFs and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
-      "zh-Hant": "截圖標註、長截圖與 GIF 錄製：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
+      "zh-Hans": "截图标注、长截图与录制（MP4 带声音 / GIF）：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
+      "en": "Annotate, record MP4 with sound or GIF, and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
+      "zh-Hant": "截圖標註、長截圖與錄製（MP4 含聲音 / GIF）：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
     },
     "author": "FluentLauncher",
     "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
     "description": {
-      "zh-Hans": "截图标注、长截图与 GIF 录制：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
-      "en": "Annotate, record GIFs and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
-      "zh-Hant": "截圖標註、長截圖與 GIF 錄製：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
+      "zh-Hans": "截图标注、长截图与录制（MP4 带声音 / GIF）：用户滚动，细线实时预览、底部操作、持续选区框与自动拼接；主题菜单、像素放大镜、原地贴图。不上传、不留历史。",
+      "en": "Annotate, record MP4 with sound or GIF, and stitch as you scroll, with a minimal live preview, bottom controls and a persistent selection outline. Includes themed menus, a pixel magnifier and pinned images. No uploads or history.",
+      "zh-Hant": "截圖標註、長截圖與錄製（MP4 含聲音 / GIF）：使用者捲動，細線即時預覽、底部操作、持續選區框與自動拼接；主題選單、像素放大鏡、原地貼圖。不上傳、不留歷史。"
     },
     "usage": {
-      "zh-Hans": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。输入 录屏 或点工具条上的录制按钮录制 GIF，保存在系统视频文件夹。",
-      "en": "Type screenshot to choose a capture mode, or enable capture and pin commands in Shortcuts. Scroll manually for stitched captures. Type record or use the toolbar's record button to record a GIF into your Videos folder.",
-      "zh-Hant": "輸入 截圖 選擇擷取方式；在快捷鍵頁啟用區域截圖或貼圖命令。長截圖由你捲動，外掛程式自動拼接。輸入 錄屏 或點工具列上的錄製按鈕錄製 GIF，儲存在系統影片資料夾。"
+      "zh-Hans": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。输入 录屏 或点工具条上的录制按钮录制 MP4 / GIF，保存在系统视频文件夹。",
+      "en": "Type screenshot to choose a capture mode, or enable capture and pin commands in Shortcuts. Scroll manually for stitched captures. Type record or use the toolbar's record button to record MP4 or GIF into your Videos folder.",
+      "zh-Hant": "輸入 截圖 選擇擷取方式；在快捷鍵頁啟用區域截圖或貼圖命令。長截圖由你捲動，外掛程式自動拼接。輸入 錄屏 或點工具列上的錄製按鈕錄製 MP4 / GIF，儲存在系統影片資料夾。"
     }
   }
 ]

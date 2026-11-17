@@ -148,6 +148,44 @@ func (s *screenSource) drawCursor() {
 	call(user32, "DrawIconEx", s.full.dc, coord(p.X), coord(p.Y), info.Cursor, 0, 0, 0, 0, 3)
 }
 
+// recordEncoder turns captured frames and mixed audio into one file. It is
+// created, fed and closed on the recording thread.
+type recordEncoder interface {
+	addFrame(bgra []byte, stride int, at time.Duration) error
+	addAudio(pcm []int16, at time.Duration) error
+	close(end time.Duration) error // completes the file
+	abort()                        // releases it unfinished
+	bytes() int64
+}
+
+type gifEncoder struct {
+	file *os.File
+	gif  *gifWriter
+}
+
+func newGIFEncoder(path string, size image.Point) (recordEncoder, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	writer, err := newGIFWriter(file, size.X, size.Y)
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return &gifEncoder{file, writer}, nil
+}
+
+func (g *gifEncoder) addFrame(bgra []byte, stride int, at time.Duration) error {
+	return g.gif.addFrame(bgra, stride, at)
+}
+func (g *gifEncoder) addAudio([]int16, time.Duration) error { return nil }
+func (g *gifEncoder) bytes() int64                          { return g.gif.size() }
+func (g *gifEncoder) abort()                                { g.file.Close() }
+func (g *gifEncoder) close(end time.Duration) error {
+	return errors.Join(g.gif.close(end), g.file.Close())
+}
+
 // recorder owns one recording from the first frame to the finished file. The
 // GUI thread only flips its flags and reads its counters.
 type recorder struct {
@@ -163,6 +201,12 @@ type recorder struct {
 	bytes    atomic.Int64
 	done     chan struct{}
 
+	// Set before run; the defaults record a silent GIF.
+	extension string
+	encoder   func(path string, size image.Point) (recordEncoder, error)
+	audio     []func() (audioSource, error)
+	volumes   []int
+
 	// Valid once done is closed.
 	path    string
 	limited bool
@@ -170,7 +214,8 @@ type recorder struct {
 }
 
 func newRecorder(open func() (frameSource, error), dir string, fps int, limit time.Duration) *recorder {
-	return &recorder{open: open, dir: dir, fps: fps, limit: limit, stop: make(chan struct{}), done: make(chan struct{})}
+	return &recorder{open: open, dir: dir, fps: fps, limit: limit, stop: make(chan struct{}), done: make(chan struct{}),
+		extension: "gif", encoder: newGIFEncoder}
 }
 
 // finish ends the capture loop; discard removes the unfinished file instead
@@ -186,6 +231,10 @@ func (r *recorder) run() {
 	defer close(r.done)
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	// Audio capture and the MP4 encoder are COM objects of this thread.
+	if hr := int32(call(ole32, "CoInitializeEx", 0, 0)); hr >= 0 {
+		defer call(ole32, "CoUninitialize")
+	}
 	r.err = r.record()
 }
 
@@ -195,62 +244,96 @@ func (r *recorder) record() error {
 		return err
 	}
 	defer source.close()
+	var tracks []audioSource
+	defer func() {
+		for _, track := range tracks {
+			track.close()
+		}
+	}()
+	for _, open := range r.audio {
+		track, err := open()
+		if err != nil {
+			return err
+		}
+		tracks = append(tracks, track)
+	}
 	if err := os.MkdirAll(r.dir, 0755); err != nil {
 		return err
 	}
-	final := filepath.Join(r.dir, recordingName(time.Now()))
+	final := filepath.Join(r.dir, recordingName(time.Now(), r.extension))
+	// A killed process leaves only the .partial file, never a broken recording.
 	partial := final + ".partial"
-	file, err := os.OpenFile(partial, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	size := source.size()
+	writer, err := r.encoder(partial, size)
 	if err != nil {
 		return err
 	}
-	// A killed process leaves only the .partial file, never a broken recording.
-	size := source.size()
-	writer, err := newGIFWriter(file, size.X, size.Y)
+	mixer := newAudioMixer(r.volumes)
+	audioFrames := func(d time.Duration) int64 { return int64(d) * audioRate / int64(time.Second) }
+	// writeAudio brings the sound track up to the given recording time.
+	writeAudio := func(target int64) error {
+		at := time.Duration(mixer.written) * time.Second / audioRate
+		if pcm := mixer.mix(target); len(pcm) > 0 {
+			return writer.addAudio(pcm, at)
+		}
+		return nil
+	}
 	interval := time.Second / time.Duration(r.fps)
 	var active time.Duration
-	if err == nil {
-		frame := make([]byte, size.X*size.Y*4)
-		if err = source.grab(frame); err == nil {
-			err = writer.addFrame(frame, size.X*4, 0)
-		}
-		r.bytes.Store(writer.size())
-		ticker := time.NewTicker(interval)
-		last := time.Now()
-	capture:
-		for err == nil {
-			select {
-			case <-r.stop:
-				break capture
-			case now := <-ticker.C:
-				step := now.Sub(last)
-				last = now
-				if r.paused.Load() {
-					continue
-				}
-				active += step
-				// A locked or secure desktop cannot be copied; keep the last
-				// frame on screen and continue when the desktop returns.
-				if source.grab(frame) == nil {
-					err = writer.addFrame(frame, size.X*4, active)
-				}
-				r.elapsed.Store(int64(active))
-				r.bytes.Store(writer.size())
-				if active >= r.limit {
-					r.limited = true
-					break capture
+	var pcm []int16
+	frame := make([]byte, size.X*size.Y*4)
+	if err = source.grab(frame); err == nil {
+		err = writer.addFrame(frame, size.X*4, 0)
+	}
+	r.bytes.Store(writer.bytes())
+	ticker := time.NewTicker(interval)
+	last := time.Now()
+capture:
+	for err == nil {
+		select {
+		case <-r.stop:
+			break capture
+		case now := <-ticker.C:
+			step := now.Sub(last)
+			last = now
+			paused := r.paused.Load()
+			for i, track := range tracks {
+				if pcm = track.read(pcm[:0]); !paused {
+					mixer.push(i, pcm)
 				}
 			}
+			if paused {
+				mixer.reset()
+				continue
+			}
+			active += step
+			// A locked or secure desktop cannot be copied; keep the last
+			// frame on screen and continue when the desktop returns.
+			if source.grab(frame) == nil {
+				err = writer.addFrame(frame, size.X*4, active)
+			}
+			if err == nil && len(tracks) > 0 {
+				err = writeAudio(audioFrames(active) - audioCushion)
+			}
+			r.elapsed.Store(int64(active))
+			r.bytes.Store(writer.bytes())
+			if active >= r.limit {
+				r.limited = true
+				break capture
+			}
 		}
-		ticker.Stop()
 	}
+	ticker.Stop()
 	if err == nil && !r.discard.Load() {
-		err = writer.close(active + interval)
-		r.bytes.Store(writer.size())
+		if len(tracks) > 0 {
+			err = writeAudio(audioFrames(active))
+		}
+		if err == nil {
+			err = writer.close(active + interval)
+			r.bytes.Store(writer.bytes())
+		}
 	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
+	writer.abort()
 	if err == nil && !r.discard.Load() {
 		if err = os.Rename(partial, final); err == nil {
 			r.path = final

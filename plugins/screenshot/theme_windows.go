@@ -190,6 +190,22 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 		call(gdi32, "SelectObject", dc, oldPen)
 		call(gdi32, "DeleteObject", brush)
 		call(gdi32, "DeleteObject", pen)
+	case "speaker", "mute":
+		l(3, 8, 7, 8)
+		l(7, 8, 11, 4)
+		l(11, 4, 11, 16)
+		l(11, 16, 7, 12)
+		l(7, 12, 3, 12)
+		l(3, 12, 3, 8)
+		if name == "mute" {
+			l(14, 8, 18, 12)
+			l(18, 8, 14, 12)
+		} else {
+			l(14, 7, 16, 10)
+			l(16, 10, 14, 13)
+			l(16, 4, 19, 10)
+			l(19, 10, 16, 16)
+		}
 	case "move":
 		l(10, 2, 10, 18)
 		l(2, 10, 18, 10)

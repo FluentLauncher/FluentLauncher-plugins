@@ -162,15 +162,31 @@ func TestGIFWriterRejectsBadInput(t *testing.T) {
 }
 
 func TestRecordModel(t *testing.T) {
-	p := recordPreferences{GIFFPS: 99, GIFScale: 1, GIFMaxSeconds: 0}.normalized()
-	if p.GIFFPS != 15 || p.GIFScale != 100 || p.GIFMaxSeconds != 60 {
+	p := recordPreferences{Format: "avi", GIFFPS: 99, MP4FPS: 24, Scale: 1, MicVolume: 300, SystemVolume: -5}.normalized()
+	if p.Format != "mp4" || p.GIFFPS != 15 || p.MP4FPS != 30 || p.Scale != 100 || p.GIFMaxSeconds != 60 || p.MP4MaxSeconds != 3600 || p.MicVolume != 100 || p.SystemVolume != 0 || p.fps() != 30 || p.limit() != time.Hour {
 		t.Fatal(p)
 	}
-	if nextOption(gifFPSOptions, 20) != 10 || nextOption(gifScaleOptions, 100) != 75 {
+	if nextOption(gifFPSOptions, 20) != 10 || nextOption(scaleOptions, 100) != 75 {
 		t.Fatal("option cycle")
 	}
 	if recordOutputSize(image.Pt(641, 3), 50) != image.Pt(320, 1) {
 		t.Fatal("output size")
+	}
+	// Video crops an odd edge at full size and never exceeds the encoder range.
+	if r, out := recordFrame(image.Rect(10, 10, 651, 491), 100, true); r != image.Rect(10, 10, 650, 490) || out != image.Pt(640, 480) {
+		t.Fatal(r, out)
+	}
+	if r, out := recordFrame(image.Rect(0, 0, 641, 481), 100, false); r.Dx() != 641 || out != image.Pt(641, 481) {
+		t.Fatal(r, out)
+	}
+	if _, out := recordFrame(image.Rect(0, 0, 5120, 1440), 100, true); out != image.Pt(4096, 1152) {
+		t.Fatal(out)
+	}
+	if _, out := recordFrame(image.Rect(0, 0, 1366, 768), 75, true); out != image.Pt(1024, 576) {
+		t.Fatal(out)
+	}
+	if recordingName(time.Unix(0, 0).UTC(), "mp4") != "Recording_19700101_000000.000000000.mp4" || formatClock(3725*time.Second) != "1:02:05" {
+		t.Fatal("names")
 	}
 	if formatClock(75*time.Second) != "01:15" || formatSize(1) != "1 KB" || formatSize(3<<19) != "1.5 MB" {
 		t.Fatal(formatClock(75*time.Second), formatSize(1), formatSize(3<<19))

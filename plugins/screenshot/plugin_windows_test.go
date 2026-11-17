@@ -48,10 +48,10 @@ func TestPreferencesAndPNG(t *testing.T) {
 	if p := loadPreferences(); !p.IncludePins || !p.NewPinShadow || p.Recording != defaultRecordPreferences() {
 		t.Fatal(p)
 	}
-	if err := savePreferences(preferences{Recording: recordPreferences{GIFFPS: 20, GIFScale: 50, GIFMaxSeconds: 9999}}); err != nil {
+	if err := savePreferences(preferences{Recording: recordPreferences{Format: "gif", GIFFPS: 20, Scale: 50, GIFMaxSeconds: 9999}}); err != nil {
 		t.Fatal(err)
 	}
-	if p := loadPreferences(); p.IncludePins || p.NewPinShadow || p.Recording != (recordPreferences{GIFFPS: 20, GIFScale: 50, GIFMaxSeconds: 60}) {
+	if p := loadPreferences(); p.IncludePins || p.NewPinShadow || p.Recording != (recordPreferences{Format: "gif", GIFFPS: 20, MP4FPS: 30, Scale: 50, GIFMaxSeconds: 60, MP4MaxSeconds: 3600}) {
 		t.Fatal(p)
 	}
 	// Settings written before recording existed keep the recording defaults.

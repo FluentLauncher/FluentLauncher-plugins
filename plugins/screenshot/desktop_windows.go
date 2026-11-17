@@ -27,6 +27,7 @@ type desktop struct {
 	pinOrder    []uintptr // back to front, preserved while hidden or excluded from capture
 	selection   *selectionWindow
 	scrolling   *scrollWindow
+	recording   *recordWindow
 	preferences preferences
 	theme       pluginsdk.Theme
 	popups      map[uintptr]*popupWindow
@@ -34,6 +35,9 @@ type desktop struct {
 	tempDir     string
 	onError     func(error)                                // controlled native tests can inspect errors without a modal dialog
 	captureLong func(image.Rectangle) (*image.RGBA, error) // nil uses the desktop; native QA may render its own controlled target
+	// Tests replace the recorded frames and the output folder; empty uses the desktop and the Videos folder.
+	recordSource func(region image.Rectangle, out image.Point) (frameSource, error)
+	recordDir    string
 }
 
 // Accessed only on the locked GUI thread, including synchronous Win32 callbacks.
@@ -45,7 +49,7 @@ func newDesktop() (*desktop, error) {
 	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline", "FLScreenshotRecord"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
@@ -128,6 +132,12 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	if s := d.scrolling; s != nil && hwnd == s.outline {
 		return s.paintSourceFrame(msg, wparam, lparam)
 	}
+	if w := d.recording; w != nil && hwnd == w.hwnd {
+		return w.handle(msg, wparam, lparam)
+	}
+	if w := d.recording; w != nil && hwnd == w.outline {
+		return outlineMessage(hwnd, w.region, w.drawOutline, msg, wparam, lparam)
+	}
 	if p := d.popups[hwnd]; p != nil {
 		return p.handle(msg, wparam, lparam)
 	}
@@ -149,6 +159,9 @@ func (d *desktop) shutdown() {
 	}
 	if d.scrolling != nil {
 		d.scrolling.close(true)
+	}
+	if d.recording != nil {
+		d.recording.close(false) // complete a running recording instead of losing it
 	}
 	d.closeMenu()
 	for _, p := range d.pins {
@@ -189,15 +202,23 @@ func (d *desktop) command(id string) {
 		}
 	case "settings":
 		d.settingsMenu()
-	case "folder":
+	case "record-stop":
+		if d.recording != nil {
+			d.recording.stop()
+		}
+	case "folder", "record-folder":
 		d.active.Add(1)
 		go func() {
-			dir, err := screenshotDirectory()
+			locate := screenshotDirectory
+			if id == "record-folder" {
+				locate = recordingDirectory
+			}
+			dir, err := locate()
 			if err == nil {
 				err = os.MkdirAll(dir, 0755)
 			}
 			if err == nil && call(shell32, "ShellExecuteW", 0, ptr(u16("open")), ptr(u16(dir)), 0, 0, 1) <= 32 {
-				err = errors.New("无法打开截图保存目录")
+				err = errors.New("无法打开保存目录")
 			}
 			_ = d.post(func() { defer d.active.Add(-1); d.report(d.controller, err) })
 		}()
@@ -211,6 +232,13 @@ func (d *desktop) startCapture(id string) {
 	}
 	d.closeMenu()
 	originalFocus := call(user32, "GetForegroundWindow")
+	if id == "record-screen" {
+		// The live screen is recorded; no frozen snapshot or selection is needed.
+		if !d.startRecording(currentMonitor(cursorPoint()), originalFocus) && d.recording == nil {
+			d.capturing.Store(false)
+		}
+		return
+	}
 	bounds := virtualBounds()
 	if id == "screen" {
 		bounds = currentMonitor(cursorPoint())
@@ -240,12 +268,13 @@ func (d *desktop) startCapture(id string) {
 				d.report(d.controller, err)
 				return
 			}
-			if id == "region" || id == "region-pin" || id == "scroll-auto" || id == "scroll-manual" {
+			if id == "region" || id == "region-pin" || id == "record" || id == "scroll-auto" || id == "scroll-manual" {
 				if err := d.openSelection(img, bounds, id == "region-pin", originalFocus); err != nil {
 					d.capturing.Store(false)
 					d.report(d.controller, err)
 				}
 				if d.selection != nil {
+					d.selection.preferRecord = id == "record"
 					invalidate(d.selection.hwnd)
 				}
 				return
@@ -305,12 +334,19 @@ func (d *desktop) settingsMenu() {
 	d.showMenu(d.controller, cursorPoint(), []menuItem{
 		{ID: 1, Label: "再次截图时包含贴图", Checked: d.preferences.IncludePins},
 		{ID: 2, Label: "新贴图显示阴影", Checked: d.preferences.NewPinShadow},
+		{ID: 3, Label: "录制时包含鼠标指针", Checked: d.preferences.Recording.Cursor},
+		{ID: 4, Label: "录制前倒计时 3 秒", Checked: d.preferences.Recording.Countdown},
 	}, func(id int) {
 		previous := d.preferences
-		if id == 1 {
+		switch id {
+		case 1:
 			d.preferences.IncludePins = !d.preferences.IncludePins
-		} else {
+		case 2:
 			d.preferences.NewPinShadow = !d.preferences.NewPinShadow
+		case 3:
+			d.preferences.Recording.Cursor = !d.preferences.Recording.Cursor
+		case 4:
+			d.preferences.Recording.Countdown = !d.preferences.Recording.Countdown
 		}
 		if err := savePreferences(d.preferences); err != nil {
 			d.preferences = previous

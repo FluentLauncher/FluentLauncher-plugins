@@ -136,10 +136,17 @@ func copyImage(owner uintptr, img *image.RGBA) error {
 
 // FOLDERID_Pictures honors relocated and OneDrive-backed Pictures folders.
 func screenshotDirectory() (string, error) {
-	id := windows.GUID{Data1: 0x33E28130, Data2: 0x4E1E, Data3: 0x4676, Data4: [8]byte{0x83, 0x5A, 0x98, 0x39, 0x5C, 0x3B, 0xC3, 0xBB}}
+	dir, err := knownFolder(windows.GUID{Data1: 0x33E28130, Data2: 0x4E1E, Data3: 0x4676, Data4: [8]byte{0x83, 0x5A, 0x98, 0x39, 0x5C, 0x3B, 0xC3, 0xBB}})
+	if err != nil {
+		return "", errors.New("无法定位系统图片文件夹")
+	}
+	return filepath.Join(dir, "FluentLauncher"), nil
+}
+
+func knownFolder(id windows.GUID) (string, error) {
 	var address uintptr
 	if int32(call(shell32, "SHGetKnownFolderPath", ptr(&id), 0, 0, ptr(&address))) < 0 {
-		return "", errors.New("无法定位系统图片文件夹")
+		return "", errors.New("无法定位系统文件夹")
 	}
 	defer call(ole32, "CoTaskMemFree", address)
 	// Read native memory without converting an integer into a Go pointer.
@@ -149,10 +156,10 @@ func screenshotDirectory() (string, error) {
 			return "", err
 		}
 		if buf[i] == 0 {
-			return filepath.Join(windows.UTF16ToString(buf[:i]), "FluentLauncher"), nil
+			return windows.UTF16ToString(buf[:i]), nil
 		}
 	}
-	return "", errors.New("系统图片路径过长")
+	return "", errors.New("系统文件夹路径过长")
 }
 
 func screenshotName(now time.Time) string {
@@ -193,19 +200,25 @@ type openFilename struct {
 }
 
 func chooseSavePath(owner uintptr) (string, error) {
-	file := make([]uint16, 32768)
-	copy(file, windows.StringToUTF16(screenshotName(time.Now())))
-	filter := []uint16{'P', 'N', 'G', 0, '*', '.', 'p', 'n', 'g', 0, 0}
 	dir, err := screenshotDirectory()
 	if err != nil {
 		return "", err
 	}
+	return chooseSave(owner, "保存截图", screenshotName(time.Now()), dir, "PNG", "png")
+}
+
+// chooseSave returns "" when the user cancels the dialog.
+func chooseSave(owner uintptr, title, name, dir, kind, extension string) (string, error) {
+	file := make([]uint16, 32768)
+	copy(file, windows.StringToUTF16(name))
+	filter := append(windows.StringToUTF16(kind), windows.StringToUTF16("*."+extension)...)
+	filter = append(filter, 0)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
 	opts := openFilename{Size: uint32(unsafe.Sizeof(openFilename{})), Owner: owner,
 		Filter: &filter[0], FilterIndex: 1, File: &file[0], MaxFile: uint32(len(file)), InitialDir: u16(dir),
-		Title: u16("保存截图"), DefaultExt: u16("png"), Flags: 0x00000002 | 0x00000800 | 0x00080000 | 0x00000008} // overwrite, path exists, explorer, no chdir
+		Title: u16(title), DefaultExt: u16(extension), Flags: 0x00000002 | 0x00000800 | 0x00080000 | 0x00000008} // overwrite, path exists, explorer, no chdir
 	if call(comdlg32, "GetSaveFileNameW", ptr(&opts)) == 0 {
 		if code := call(comdlg32, "CommDlgExtendedError"); code != 0 {
 			return "", fmt.Errorf("保存对话框失败：0x%x", code)
@@ -216,18 +229,21 @@ func chooseSavePath(owner uintptr) (string, error) {
 }
 
 type preferences struct {
-	IncludePins  bool `json:"includePins"`
-	NewPinShadow bool `json:"newPinShadow"`
+	IncludePins  bool              `json:"includePins"`
+	NewPinShadow bool              `json:"newPinShadow"`
+	Recording    recordPreferences `json:"recording"`
 }
 
 func preferencesPath() string {
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "FluentLauncher", "plugin-data", "official.screenshot", "settings.json")
 }
 func loadPreferences() preferences {
-	p := preferences{true, true}
+	// Fields missing from an older file keep their defaults.
+	p := preferences{IncludePins: true, NewPinShadow: true, Recording: defaultRecordPreferences()}
 	if data, err := os.ReadFile(preferencesPath()); err == nil {
 		_ = json.Unmarshal(data, &p)
 	}
+	p.Recording = p.Recording.normalized()
 	return p
 }
 func savePreferences(p preferences) error {

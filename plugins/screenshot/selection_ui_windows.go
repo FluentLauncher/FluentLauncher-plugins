@@ -13,7 +13,7 @@ var captureTools = []captureTool{
 	{"rect", "矩形", "R"}, {"ellipse", "椭圆", "E"}, {"arrow", "箭头", "A"},
 	{"pen", "画笔", "B"}, {"mosaic", "马赛克", "M"}, {"text", "文字", "T"},
 	{"undo", "撤销", "Ctrl+Z"}, {"redo", "重做", "Ctrl+Y"},
-	{"scroll", "滚动截图", "L"}, {"pin", "原地贴图", "P"}, {"save", "保存", "Ctrl+S"},
+	{"scroll", "滚动截图", "L"}, {"record", "录制 GIF", "V"}, {"pin", "原地贴图", "P"}, {"save", "保存", "Ctrl+S"},
 	{"close", "取消", "Esc"}, {"check", "完成", "Enter"},
 }
 
@@ -43,16 +43,16 @@ func (s *selectionWindow) paintToolbar(dc uintptr) {
 	t, scale := s.d.theme, uiScale(s.hwnd)
 	bar := s.toolbar()
 	s.paintFrozenPanel(dc, bar)
-	primary := len(captureTools) - 1
-	if s.preferPin {
-		primary = 9
+	primary := s.defaultOutput()
+	if primary == "copy" {
+		primary = "check"
 	}
 	buttons := s.toolbarButtons()
 	for i, r := range buttons {
 		color := t.Text
 		id := captureTools[i].id
 		disabled := (id == "undo" && len(s.marks) == 0) || (id == "redo" && len(s.redo) == 0)
-		if i == primary || id == s.tool {
+		if id == primary || id == s.tool {
 			roundPanel(dc, r, px(4, scale), t.Accent, t.Accent)
 			color = t.AccentText
 		} else if i == s.toolbarHover {

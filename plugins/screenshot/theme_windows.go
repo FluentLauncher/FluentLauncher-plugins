@@ -42,6 +42,9 @@ func (d *desktop) applyTheme(theme pluginsdk.Theme) {
 		d.scrolling.updatePreviewRegion()
 		invalidate(d.scrolling.outline)
 	}
+	if d.recording != nil {
+		d.recording.applyMaterial()
+	}
 	for _, hwnd := range d.pinOrder {
 		p := d.pins[hwnd]
 		p.shadowBitmap.close()
@@ -178,6 +181,24 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 		l(13, 8, 16, 12)
 		l(4, 12, 16, 12)
 		l(10, 12, 10, 18)
+	case "record":
+		brush, pen := call(gdi32, "CreateSolidBrush", rgbRef(c)), call(gdi32, "CreatePen", 0, 1, rgbRef(c))
+		oldBrush, oldPen := call(gdi32, "SelectObject", dc, brush), call(gdi32, "SelectObject", dc, pen)
+		a, b := p(4, 4), p(16, 16)
+		call(gdi32, "Ellipse", dc, coord(a.X), coord(a.Y), coord(b.X), coord(b.Y))
+		call(gdi32, "SelectObject", dc, oldBrush)
+		call(gdi32, "SelectObject", dc, oldPen)
+		call(gdi32, "DeleteObject", brush)
+		call(gdi32, "DeleteObject", pen)
+	case "stop":
+		fill(dc, image.Rectangle{Min: p(5, 5), Max: p(15, 15)}, rgbRef(c))
+	case "folder":
+		l(2, 5, 8, 5)
+		l(8, 5, 10, 7)
+		l(10, 7, 18, 7)
+		l(18, 7, 18, 16)
+		l(18, 16, 2, 16)
+		l(2, 16, 2, 5)
 	case "close":
 		l(5, 5, 15, 15)
 		l(5, 15, 15, 5)

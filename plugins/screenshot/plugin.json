@@ -1,17 +1,19 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.6.3",
+  "version": "1.7.0",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": [
     "截图",
     "screenshot",
     "snap",
-    "截屏"
+    "截屏",
+    "录屏",
+    "record"
   ],
   "permissions": [],
-  "description": "截图标注与原地贴图；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
+  "description": "截图标注、原地贴图与 GIF 录制；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
   "commands": [
     {
       "id": "region",
@@ -38,6 +40,30 @@
       "activation": "invoke"
     },
     {
+      "id": "record",
+      "title": "区域录制 GIF",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+R"
+      ]
+    },
+    {
+      "id": "record-screen",
+      "title": "当前显示器录制 GIF",
+      "scope": "global",
+      "activation": "invoke"
+    },
+    {
+      "id": "record-stop",
+      "title": "停止录制",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+Shift+R"
+      ]
+    },
+    {
       "id": "show",
       "title": "显示全部贴图",
       "scope": "global",
@@ -53,5 +79,5 @@
   "icon": "assets/icon.png",
   "author": "FluentLauncher",
   "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
-  "usage": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。"
+  "usage": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。输入 录屏 或点工具条上的录制按钮录制 GIF，保存在系统视频文件夹。"
 }

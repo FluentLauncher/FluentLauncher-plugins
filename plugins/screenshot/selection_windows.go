@@ -19,6 +19,7 @@ type selectionWindow struct {
 	dragStart                 image.Rectangle
 	dragMode                  int // 0 idle, 1 new, 2 move, 4/8/16/32 resize edges
 	preferPin                 bool
+	preferRecord              bool // opened by the record command: Enter starts recording
 	busy                      bool
 	cursor                    image.Point
 	toolbarHover              int
@@ -84,7 +85,7 @@ func (s *selectionWindow) close() {
 
 func (s *selectionWindow) toolbar() image.Rectangle {
 	scale := max(1.0, float64(call(user32, "GetDpiForWindow", s.hwnd))/96)
-	w, h := px(398, scale), px(34, scale)
+	w, h := px(428, scale), px(34, scale)
 	if s.tool != "" {
 		h = px(64, scale)
 	}
@@ -282,6 +283,8 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 			invalidate(s.hwnd)
 		case 'L':
 			s.output("scroll")
+		case 'V':
+			s.output("record")
 		case 'Z', 'Y':
 			if ctrlDown() {
 				s.undoMark(wparam == 'Y' || shiftDown())
@@ -310,6 +313,9 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 }
 
 func (s *selectionWindow) defaultOutput() string {
+	if s.preferRecord {
+		return "record"
+	}
 	if s.preferPin {
 		return "pin"
 	}
@@ -423,20 +429,27 @@ func (s *selectionWindow) output(kind string) {
 		return
 	}
 	s.finishText(true)
-	if kind == "scroll" {
+	if kind == "scroll" || kind == "record" {
 		region, scale := s.selected.Add(s.desktopBounds.Min), uiScale(s.hwnd)
 		s.d.active.Add(1)
 		defer s.d.active.Add(-1)
 		seed := longSeed{crop(s.image, s.selected), s.annotationMarks()}
 		s.close()
-		s.d.startLongCapture(region, scale, seed)
-		if s.d.scrolling == nil {
+		started := false
+		if kind == "record" {
+			// The live screen is recorded: the frozen frame and its marks are dropped.
+			started = s.d.startRecording(region, s.originalFocus)
+		} else {
+			s.d.startLongCapture(region, scale, seed)
+			started = s.d.scrolling != nil
+		}
+		if !started {
 			if err := s.d.openSelection(s.image, s.desktopBounds, s.preferPin, s.originalFocus); err != nil {
 				s.d.report(s.d.controller, err)
 			} else {
 				restored := s.d.selection
 				restored.selected, restored.marks, restored.redo, restored.tool = s.selected, s.marks, s.redo, s.tool
-				restored.ink, restored.strokeWidth = s.ink, s.strokeWidth
+				restored.ink, restored.strokeWidth, restored.preferRecord = s.ink, s.strokeWidth, s.preferRecord
 				s.d.capturing.Store(true)
 			}
 		}

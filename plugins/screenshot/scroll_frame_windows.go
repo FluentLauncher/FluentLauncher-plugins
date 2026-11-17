@@ -9,35 +9,43 @@ import "image"
 const sourceFrameWidth = 2
 
 func (s *scrollWindow) openSourceFrame() bool {
-	bounds := s.region.Inset(-sourceFrameWidth)
-	s.outline = s.d.createWindow("FLScreenshotOutline", "长截图选区", wsExTopmost|wsExToolwindow|wsExNoactivate|wsExTransparent|wsExLayered, s.d.controller, bounds)
-	if s.outline == 0 {
-		return false
+	s.outline = s.d.openOutline(s.region, "长截图选区")
+	return s.outline != 0
+}
+
+// openOutline shows a click-through ring around a region; 0 means failure.
+func (d *desktop) openOutline(region image.Rectangle, title string) uintptr {
+	bounds := region.Inset(-sourceFrameWidth)
+	outline := d.createWindow("FLScreenshotOutline", title, wsExTopmost|wsExToolwindow|wsExNoactivate|wsExTransparent|wsExLayered, d.controller, bounds)
+	if outline == 0 {
+		return 0
 	}
 	outer := call(gdi32, "CreateRectRgn", 0, 0, bounds.Dx(), bounds.Dy())
 	inner := call(gdi32, "CreateRectRgn", sourceFrameWidth, sourceFrameWidth, bounds.Dx()-sourceFrameWidth, bounds.Dy()-sourceFrameWidth)
 	call(gdi32, "CombineRgn", outer, outer, inner, 4) // RGN_DIFF: no filled interior.
 	call(gdi32, "DeleteObject", inner)
-	if call(user32, "SetWindowRgn", s.outline, outer, 0) == 0 {
+	if call(user32, "SetWindowRgn", outline, outer, 0) == 0 {
 		call(gdi32, "DeleteObject", outer)
-		call(user32, "DestroyWindow", s.outline)
-		s.outline = 0
-		return false
+		call(user32, "DestroyWindow", outline)
+		return 0
 	}
-	call(user32, "SetLayeredWindowAttributes", s.outline, 0, 255, 2)
-	call(user32, "SetWindowDisplayAffinity", s.outline, 0x11)
-	windowAt(s.outline, bounds, false)
-	return true
+	call(user32, "SetLayeredWindowAttributes", outline, 0, 255, 2)
+	call(user32, "SetWindowDisplayAffinity", outline, 0x11)
+	windowAt(outline, bounds, false)
+	return outline
 }
 
 func (s *scrollWindow) paintSourceFrame(msg uint32, wparam, lparam uintptr) uintptr {
+	return outlineMessage(s.outline, s.region, s.drawSourceFrame, msg, wparam, lparam)
+}
+
+func outlineMessage(hwnd uintptr, region image.Rectangle, draw func(uintptr, image.Rectangle), msg uint32, wparam, lparam uintptr) uintptr {
 	switch msg {
 	case wmPaint:
 		var ps paintStruct
-		dc := call(user32, "BeginPaint", s.outline, ptr(&ps))
-		defer call(user32, "EndPaint", s.outline, ptr(&ps))
-		r := image.Rectangle{Max: s.region.Size().Add(image.Pt(sourceFrameWidth*2, sourceFrameWidth*2))}
-		s.drawSourceFrame(dc, r)
+		dc := call(user32, "BeginPaint", hwnd, ptr(&ps))
+		defer call(user32, "EndPaint", hwnd, ptr(&ps))
+		draw(dc, image.Rectangle{Max: region.Size().Add(image.Pt(sourceFrameWidth*2, sourceFrameWidth*2))})
 		return 0
 	case 0x0014:
 		return 1
@@ -46,7 +54,7 @@ func (s *scrollWindow) paintSourceFrame(msg uint32, wparam, lparam uintptr) uint
 	case 0x0021:
 		return 3 // MA_NOACTIVATE
 	}
-	return call(user32, "DefWindowProcW", s.outline, msg, wparam, lparam)
+	return call(user32, "DefWindowProcW", hwnd, msg, wparam, lparam)
 }
 
 func (s *scrollWindow) drawSourceFrame(dc uintptr, r image.Rectangle) {

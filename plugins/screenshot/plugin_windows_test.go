@@ -23,7 +23,7 @@ func TestQueryAndActivity(t *testing.T) {
 	d := &desktop{}
 	h := handler{d}
 	rows, err := h.Query(context.Background(), pluginsdk.Query{Text: "区域", MaxResults: 20})
-	if err != nil || len(rows) != 2 {
+	if err != nil || len(rows) != 3 { // region, region-pin, record
 		t.Fatalf("region menu: %v %v", rows, err)
 	}
 	if err := h.ExecuteCommand(context.Background(), pluginsdk.ExecuteCommandRequest{CommandID: "missing"}); err == nil {
@@ -45,16 +45,23 @@ func TestQueryAndActivity(t *testing.T) {
 
 func TestPreferencesAndPNG(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
-	if p := loadPreferences(); !p.IncludePins || !p.NewPinShadow {
+	if p := loadPreferences(); !p.IncludePins || !p.NewPinShadow || p.Recording != defaultRecordPreferences() {
 		t.Fatal(p)
 	}
-	if err := savePreferences(preferences{false, false}); err != nil {
+	if err := savePreferences(preferences{Recording: recordPreferences{GIFFPS: 20, GIFScale: 50, GIFMaxSeconds: 9999}}); err != nil {
 		t.Fatal(err)
 	}
-	if p := loadPreferences(); p.IncludePins || p.NewPinShadow {
+	if p := loadPreferences(); p.IncludePins || p.NewPinShadow || p.Recording != (recordPreferences{GIFFPS: 20, GIFScale: 50, GIFMaxSeconds: 60}) {
 		t.Fatal(p)
 	}
-	if err := savePreferences(preferences{true, false}); err != nil {
+	// Settings written before recording existed keep the recording defaults.
+	if err := os.WriteFile(preferencesPath(), []byte(`{"includePins":false,"newPinShadow":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if p := loadPreferences(); p.IncludePins || !p.NewPinShadow || p.Recording != defaultRecordPreferences() {
+		t.Fatal(p)
+	}
+	if err := savePreferences(preferences{IncludePins: true}); err != nil {
 		t.Fatal("replace preferences:", err)
 	}
 	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
@@ -71,7 +78,7 @@ func TestPreferencesAndPNG(t *testing.T) {
 	if err != nil || color.RGBAModel.Convert(decoded.At(0, 0)) != img.At(0, 0) {
 		t.Fatalf("PNG round trip: %v", err)
 	}
-	if unsafe.Sizeof(openFilename{}) != 152 || unsafe.Sizeof(message{}) != 48 || unsafe.Sizeof(wndClass{}) != 80 {
+	if unsafe.Sizeof(openFilename{}) != 152 || unsafe.Sizeof(message{}) != 48 || unsafe.Sizeof(wndClass{}) != 80 || unsafe.Sizeof(cursorInfo{}) != 24 || unsafe.Sizeof(iconInfo{}) != 32 {
 		t.Fatal("Windows x64 ABI layout")
 	}
 	data, _ = os.ReadFile("plugin.json")

@@ -24,6 +24,10 @@ var entries = []menuEntry{
 	{"all", "所有显示器截图", "复制整个虚拟桌面，默认包含已有贴图"},
 	{"quick-save", "所有显示器截图并快速保存", "保存到系统图片文件夹下的 FluentLauncher"},
 	{"folder", "打开截图保存目录", "打开系统图片文件夹下的 FluentLauncher"},
+	{"record", "区域录制 GIF", "拖选后录制实时画面 · 可暂停 · 保存到系统视频文件夹下的 FluentLauncher"},
+	{"record-screen", "当前显示器录制 GIF", "录制鼠标所在显示器 · 操作条不会出现在画面中"},
+	{"record-stop", "停止录制", "保存正在进行的录制；尚未开始时取消"},
+	{"record-folder", "打开录制保存目录", "打开系统视频文件夹下的 FluentLauncher"},
 	{"show", "显示全部贴图", "恢复之前隐藏的图片"},
 	{"hide", "隐藏全部贴图", "仅隐藏，图片继续保留在内存"},
 	{"close", "关闭全部贴图", "释放所有贴图，不保留历史"},
@@ -79,7 +83,7 @@ func (h handler) execute(ctx context.Context, id string) error {
 	if !valid {
 		return fmt.Errorf("未知截图命令：%s", id)
 	}
-	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" || id == "scroll-auto" || id == "scroll-manual" {
+	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" || id == "record" || id == "record-screen" || id == "scroll-auto" || id == "scroll-manual" {
 		if !h.desktop.capturing.CompareAndSwap(false, true) {
 			return errors.New("已有截图正在进行，请先完成或取消")
 		}

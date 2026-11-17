@@ -190,6 +190,17 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 		call(gdi32, "SelectObject", dc, oldPen)
 		call(gdi32, "DeleteObject", brush)
 		call(gdi32, "DeleteObject", pen)
+	case "move":
+		l(10, 2, 10, 18)
+		l(2, 10, 18, 10)
+		l(10, 2, 7, 5)
+		l(10, 2, 13, 5)
+		l(10, 18, 7, 15)
+		l(10, 18, 13, 15)
+		l(2, 10, 5, 7)
+		l(2, 10, 5, 13)
+		l(18, 10, 15, 7)
+		l(18, 10, 15, 13)
 	case "stop":
 		fill(dc, image.Rectangle{Min: p(5, 5), Max: p(15, 15)}, rgbRef(c))
 	case "folder":

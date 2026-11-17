@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"io"
+	"image/color"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 type recordState int
@@ -31,10 +29,18 @@ const (
 	wmTimer              = 0x0113
 )
 
-type recordButton struct{ id, label, icon, hint string }
+// recordItem is one slot of the single-row bar. An empty id is static
+// content; "grip" drags the bar. Widths are in DIP.
+type recordItem struct {
+	id, label, icon, hint string
+	width                 int
+	disabled, danger      bool
+	primary               bool
+}
 
-// recordWindow is the small control bar next to the recorded region. It and
-// the outline are excluded from capture, so neither appears in the result.
+// recordWindow is the control bar next to the recorded region. It and the
+// outline are excluded from capture, so neither appears in the result.
+// The window is the bar plus a transparent band that only shows hints.
 type recordWindow struct {
 	d             *desktop
 	hwnd, outline uintptr
@@ -42,7 +48,12 @@ type recordWindow struct {
 	material      string
 	opaqueButtons []opaqueSurface
 	region        image.Rectangle
-	bounds        image.Rectangle
+	bar           image.Rectangle // screen position of the visible bar
+	bounds        image.Rectangle // window: bar and hint band
+	hintAbove     bool
+	hint          image.Rectangle // window-local hint pill, empty when hidden
+	shape         [2]image.Rectangle
+	excluded      bool
 	state         recordState
 	countdown     int
 	rec           *recorder
@@ -50,8 +61,13 @@ type recordWindow struct {
 	fileSize      int64
 	limited       bool
 	busy          bool
-	keyboard      bool // Tab was used: describe the focused button
+	keyboard      bool // Tab was used: describe the focused item
 	hover, focus  int
+	pressed       int
+	dragMode      int // 1 moves the bar, 2 moves the region with the bar
+	dragStart     image.Point
+	dragBar       image.Rectangle
+	dragRegion    image.Rectangle
 	paintBuffer   paintBuffer
 }
 
@@ -70,17 +86,16 @@ func (d *desktop) startRecording(region image.Rectangle, focus uintptr) bool {
 		return false
 	}
 	monitor := currentMonitor(region.Min.Add(region.Size().Div(2)))
-	w := &recordWindow{d: d, region: region, originalFocus: focus, hover: -1}
+	w := &recordWindow{d: d, region: region, originalFocus: focus, hover: -1, pressed: -1}
 	// Created on the target monitor first: its DPI decides the bar size.
 	w.hwnd = d.createWindow("FLScreenshotRecord", "录制", wsExTopmost|wsExToolwindow|wsExLayered, d.controller, image.Rectangle{Min: monitor.Min, Max: monitor.Min.Add(image.Pt(1, 1))})
 	if w.hwnd == 0 {
 		d.report(d.controller, errors.New("无法创建录制操作条"))
 		return false
 	}
-	scale := uiScale(w.hwnd)
-	w.bounds = recordBarBounds(region, monitor, image.Pt(px(340, scale), px(64, scale)), px(10, scale))
-	excluded := call(user32, "SetWindowDisplayAffinity", w.hwnd, 0x11) != 0
-	if w.bounds.Overlaps(region) && !excluded {
+	w.bar = recordBarBounds(region, monitor, w.barSize(), px(10, uiScale(w.hwnd)))
+	w.excluded = call(user32, "SetWindowDisplayAffinity", w.hwnd, 0x11) != 0
+	if w.bar.Overlaps(region) && !w.excluded {
 		call(user32, "DestroyWindow", w.hwnd)
 		d.report(d.controller, errors.New("系统无法把操作条排除在录制画面之外，请缩小选区，给操作条留出位置"))
 		return false
@@ -93,9 +108,9 @@ func (d *desktop) startRecording(region image.Rectangle, focus uintptr) bool {
 	d.recording = w
 	d.capturing.Store(true)
 	d.active.Add(1)
-	w.focus = len(w.buttons()) - 1
-	w.applyMaterial()
-	windowAt(w.hwnd, w.bounds, true)
+	w.focus = w.defaultFocus()
+	w.material = applySurfaceMaterial(w.hwnd, d.theme)
+	w.place(true)
 	call(user32, "SetForegroundWindow", w.hwnd)
 	call(user32, "SetFocus", w.hwnd)
 	return true
@@ -103,15 +118,36 @@ func (d *desktop) startRecording(region image.Rectangle, focus uintptr) bool {
 
 func (w *recordWindow) applyMaterial() {
 	w.material = applySurfaceMaterial(w.hwnd, w.d.theme)
-	radius := px(int(max(0, w.d.theme.Radius)), uiScale(w.hwnd))
-	region := call(gdi32, "CreateRoundRectRgn", 0, 0, w.bounds.Dx()+1, w.bounds.Dy()+1, radius*2, radius*2)
-	if call(user32, "SetWindowRgn", w.hwnd, region, 0) == 0 {
-		call(gdi32, "DeleteObject", region)
-	}
+	w.shape = [2]image.Rectangle{}
 	invalidate(w.hwnd)
 	if w.outline != 0 {
 		invalidate(w.outline)
 	}
+}
+
+// place sizes the window for the current items and keeps it on the monitor.
+// The hint band sits below the bar, or above it at the bottom screen edge.
+func (w *recordWindow) place(activate bool) {
+	scale := uiScale(w.hwnd)
+	size := w.barSize()
+	monitor := currentMonitor(w.bar.Min.Add(w.bar.Size().Div(2)))
+	p := image.Pt(max(monitor.Min.X, min(w.bar.Min.X, monitor.Max.X-size.X)), max(monitor.Min.Y, min(w.bar.Min.Y, monitor.Max.Y-size.Y)))
+	w.bar = image.Rectangle{Min: p, Max: p.Add(size)}
+	band := px(30, scale)
+	w.hintAbove = w.bar.Max.Y+band > monitor.Max.Y
+	w.bounds = w.bar
+	if w.hintAbove {
+		w.bounds.Min.Y -= band
+	} else {
+		w.bounds.Max.Y += band
+	}
+	w.shape = [2]image.Rectangle{}
+	windowAt(w.hwnd, w.bounds, activate)
+	invalidate(w.hwnd)
+}
+
+func (w *recordWindow) barLocal() image.Rectangle {
+	return w.bar.Sub(w.bounds.Min)
 }
 
 // close removes the bar. An unfinished recording is discarded on request;
@@ -131,6 +167,9 @@ func (w *recordWindow) close(discard bool) {
 			}
 		}
 	}
+	if w.dragMode != 0 {
+		call(user32, "ReleaseCapture")
+	}
 	call(user32, "KillTimer", w.hwnd, recordCountdownTimer)
 	call(user32, "KillTimer", w.hwnd, recordRefreshTimer)
 	call(user32, "DestroyWindow", w.hwnd)
@@ -147,8 +186,12 @@ func (w *recordWindow) close(discard bool) {
 func (w *recordWindow) setState(state recordState) {
 	w.state = state
 	w.hover, w.keyboard = -1, false
-	w.focus = len(w.buttons()) - 1
-	invalidate(w.hwnd)
+	w.focus = w.defaultFocus()
+	if w.dragMode != 0 {
+		w.dragMode = 0
+		call(user32, "ReleaseCapture")
+	}
+	w.place(false)
 	if w.outline != 0 {
 		invalidate(w.outline)
 	}
@@ -224,117 +267,201 @@ func (w *recordWindow) stop() {
 	}
 }
 
-func (w *recordWindow) buttons() []recordButton {
+func (w *recordWindow) items() []recordItem {
 	prefs := w.d.preferences.Recording
+	grip := recordItem{id: "grip", hint: "拖动移动工具栏", width: 14}
+	sep := recordItem{icon: "sep", width: 9}
+	if w.state == recordDone {
+		summary := fmt.Sprintf("已保存 %s · %s", formatClock(time.Duration(w.rec.elapsed.Load())), formatSize(w.fileSize))
+		if w.limited {
+			summary += " · 已达上限"
+		}
+		return []recordItem{grip, {label: summary, width: 210},
+			{id: "copy", icon: "copy", hint: "复制文件，可粘贴到聊天或文件夹", width: 32},
+			{id: "save", icon: "save", hint: "另存为", width: 32},
+			{id: "folder", icon: "folder", hint: "在文件夹中显示", width: 32},
+			{id: "open", icon: "start", hint: "打开录制结果 · Enter", width: 32, primary: true},
+			sep, {id: "cancel", icon: "close", hint: "关闭 · Esc", width: 32}}
+	}
+	setup := w.state == recordSetup
+	clock := recordItem{label: "00:00", width: 50}
+	fps := recordItem{id: "fps", label: fmt.Sprintf("%dFPS", prefs.GIFFPS), hint: "帧率 · 点击切换 10 / 15 / 20", width: 50, disabled: !setup}
+	third := recordItem{id: "scale", label: fmt.Sprintf("%d%%", prefs.GIFScale), hint: "画面缩放 · 点击切换 100% / 75% / 50%", width: 58, disabled: !setup}
+	action := recordItem{id: "start", icon: "record", hint: "开始录制 · Enter", width: 32, danger: true}
+	pause := recordItem{id: "pause", icon: "pause", hint: "暂停录制", width: 32, disabled: true}
+	move := recordItem{id: "move", icon: "move", hint: "按住拖动，移动录制区域", width: 32, disabled: !setup}
+	cancel := recordItem{id: "cancel", icon: "close", hint: "取消 · Esc", width: 32}
 	switch w.state {
-	case recordSetup:
-		return []recordButton{
-			{"fps", fmt.Sprintf("%d 帧/秒", prefs.GIFFPS), "", "帧率 · 点击切换 10 / 15 / 20"},
-			{"scale", fmt.Sprintf("%d%%", prefs.GIFScale), "", "画面缩放 · 点击切换 100% / 75% / 50%"},
-			{"cancel", "取消", "close", "取消 · Esc"},
-			{"start", "开始", "record", "开始录制 · Enter"},
-		}
 	case recordCountdown:
-		return []recordButton{{"cancel", "取消", "close", "取消 · Esc"}, {"start", "立即开始", "record", "跳过倒计时"}}
-	case recordRunning:
-		pause := recordButton{"pause", "暂停", "pause", "暂停录制"}
+		clock.label = fmt.Sprintf("%d 秒", w.countdown)
+		action.hint = "跳过倒计时，立即开始"
+	case recordRunning, recordSaving:
+		elapsed := time.Duration(w.rec.elapsed.Load())
+		limit := time.Duration(prefs.GIFMaxSeconds) * time.Second
+		clock.label, clock.danger = formatClock(elapsed), limit-elapsed <= 10*time.Second
+		third = recordItem{label: formatSize(w.rec.bytes.Load()), width: 58, disabled: true}
+		action = recordItem{id: "stop", icon: "stop", hint: fmt.Sprintf("停止并保存 · 最长 %s", formatClock(limit)), width: 32, danger: true}
+		pause.disabled = false
 		if w.rec.paused.Load() {
-			pause = recordButton{"pause", "继续", "start", "继续录制"}
+			pause.icon, pause.hint = "start", "继续录制"
 		}
-		return []recordButton{pause, {"cancel", "取消", "close", "取消并丢弃录制"}, {"stop", "停止", "stop", "停止并保存"}}
-	case recordDone:
-		return []recordButton{
-			{"copy", "", "copy", "复制文件，可粘贴到聊天或文件夹"},
-			{"save", "", "save", "另存为"},
-			{"folder", "", "folder", "在文件夹中显示"},
-			{"cancel", "", "close", "关闭 · Esc"},
-			{"open", "", "start", "打开录制结果 · Enter"},
+		cancel.hint = "取消并丢弃录制"
+		if w.state == recordSaving {
+			clock.label, clock.danger = "保存中", false
+			action.disabled, pause.disabled, cancel.disabled = true, true, true
 		}
 	}
-	return nil
+	return []recordItem{grip, clock, fps, third, action, pause, sep, move, cancel}
 }
 
-func (w *recordWindow) buttonBounds() []image.Rectangle {
+func (w *recordWindow) barSize() image.Point {
 	scale := uiScale(w.hwnd)
-	pad, gap, h := px(6, scale), px(4, scale), px(32, scale)
-	count := len(w.buttons())
-	if count == 0 {
-		return nil
+	width := px(4, scale) * 2
+	for _, it := range w.items() {
+		width += px(it.width, scale)
 	}
-	width := (w.bounds.Dx() - pad*2 - gap*(count-1)) / count
-	result := make([]image.Rectangle, count)
-	y := w.bounds.Dy() - pad - h
-	for i := range result {
-		x := pad + i*(width+gap)
-		result[i] = image.Rect(x, y, x+width, y+h)
+	return image.Pt(width, px(40, scale))
+}
+
+// itemBounds are window-local, in the order of items().
+func (w *recordWindow) itemBounds() []image.Rectangle {
+	scale, bar := uiScale(w.hwnd), w.barLocal()
+	items := w.items()
+	result := make([]image.Rectangle, len(items))
+	x := bar.Min.X + px(4, scale)
+	for i, it := range items {
+		width := px(it.width, scale)
+		result[i] = image.Rect(x, bar.Min.Y+px(4, scale), x+width, bar.Max.Y-px(4, scale))
+		x += width
 	}
 	return result
 }
 
-func (w *recordWindow) caption() string {
-	size := recordOutputSize(w.region.Size(), w.d.preferences.Recording.GIFScale)
-	switch w.state {
-	case recordSetup:
-		return fmt.Sprintf("GIF · %d × %d · 无声音", size.X, size.Y)
-	case recordCountdown:
-		return fmt.Sprintf("%d 秒后开始录制", w.countdown)
-	case recordRunning:
-		status := "录制中"
-		if w.rec.paused.Load() {
-			status = "已暂停"
+func (w *recordWindow) itemAt(p image.Point) int {
+	for i, r := range w.itemBounds() {
+		if p.In(r) {
+			return i
 		}
-		limit := time.Duration(w.d.preferences.Recording.GIFMaxSeconds) * time.Second
-		return fmt.Sprintf("%s %s / %s · %s", status, formatClock(time.Duration(w.rec.elapsed.Load())), formatClock(limit), formatSize(w.rec.bytes.Load()))
-	case recordSaving:
-		return "正在保存…"
 	}
-	text := fmt.Sprintf("已保存 · %s · %s", formatClock(time.Duration(w.rec.elapsed.Load())), formatSize(w.fileSize))
-	if w.limited {
-		text += " · 已达时长上限"
+	return -1
+}
+
+func (w *recordWindow) itemIndex(id string) int {
+	for i, it := range w.items() {
+		if it.id == id {
+			return i
+		}
 	}
-	return text
+	return -1
+}
+
+func (it recordItem) focusable() bool { return it.id != "" && it.id != "grip" && !it.disabled }
+
+func (w *recordWindow) defaultFocus() int {
+	for _, id := range []string{"start", "stop", "open"} {
+		if i := w.itemIndex(id); i >= 0 {
+			return i
+		}
+	}
+	return -1
 }
 
 func (w *recordWindow) paint() {
 	var ps paintStruct
 	call(user32, "BeginPaint", w.hwnd, ptr(&ps))
 	call(user32, "EndPaint", w.hwnd, ptr(&ps))
-	err := w.paintBuffer.render(w.hwnd, w.bounds.Size(), w.draw)
+	img, err := w.layeredImage()
 	if err == nil {
-		var img *image.RGBA
-		if img, err = w.paintBuffer.pixels(); err == nil {
-			t := w.d.theme
-			surfaceAlpha(img, t, img.Bounds(), px(int(t.Radius), uiScale(w.hwnd)), materialAlpha(t, w.material), w.opaqueButtons)
-			err = presentLayered(w.hwnd, w.bounds, img)
-		}
+		w.updateShape()
+		err = presentLayered(w.hwnd, w.bounds, img)
 	}
 	if err != nil {
 		log.Print(err)
 	}
 }
 
+// layeredImage is the presented frame: a translucent bar, an opaque hint
+// and nothing else.
+func (w *recordWindow) layeredImage() (*image.RGBA, error) {
+	if err := w.paintBuffer.render(w.hwnd, w.bounds.Size(), w.draw); err != nil {
+		return nil, err
+	}
+	img, err := w.paintBuffer.pixels()
+	if err != nil {
+		return nil, err
+	}
+	t, scale, bar := w.d.theme, uiScale(w.hwnd), w.barLocal()
+	surfaceAlpha(img, t, bar, px(int(t.Radius), scale), materialAlpha(t, w.material), w.opaqueButtons)
+	for y := 0; y < img.Rect.Dy(); y++ {
+		if y >= bar.Min.Y && y < bar.Max.Y {
+			continue
+		}
+		for x := 0; x < img.Rect.Dx(); x++ {
+			if !inRound(image.Pt(x, y), w.hint, px(4, scale)) {
+				img.SetRGBA(x, y, color.RGBA{})
+			}
+		}
+	}
+	return img, nil
+}
+
+// The window region keeps materials (blur) and clicks to the visible parts.
+func (w *recordWindow) updateShape() {
+	bar := w.barLocal()
+	if w.shape == [2]image.Rectangle{bar, w.hint} {
+		return
+	}
+	w.shape = [2]image.Rectangle{bar, w.hint}
+	radius := px(int(max(0, w.d.theme.Radius)), uiScale(w.hwnd))
+	rgn := call(gdi32, "CreateRoundRectRgn", coord(bar.Min.X), coord(bar.Min.Y), coord(bar.Max.X+1), coord(bar.Max.Y+1), radius*2, radius*2)
+	if !w.hint.Empty() {
+		hint := call(gdi32, "CreateRectRgn", coord(w.hint.Min.X), coord(w.hint.Min.Y), coord(w.hint.Max.X), coord(w.hint.Max.Y))
+		call(gdi32, "CombineRgn", rgn, rgn, hint, 2)
+		call(gdi32, "DeleteObject", hint)
+	}
+	if call(user32, "SetWindowRgn", w.hwnd, rgn, 0) == 0 {
+		call(gdi32, "DeleteObject", rgn)
+	}
+}
+
 func (w *recordWindow) draw(dc uintptr) {
 	t, scale := w.d.theme, uiScale(w.hwnd)
-	bar := image.Rectangle{Max: w.bounds.Size()}
-	fill(dc, bar, rgbRef(t.Background))
-	surfacePanel(dc, bar, px(int(t.Radius), scale), t)
+	window := image.Rectangle{Max: w.bounds.Size()}
+	fill(dc, window, rgbRef(t.Background))
+	surfacePanel(dc, w.barLocal(), px(int(t.Radius), scale), t)
 	w.opaqueButtons = nil
-	buttons := w.buttons()
+	items, bounds := w.items(), w.itemBounds()
 	focused := call(user32, "GetFocus") == w.hwnd
-	for i, r := range w.buttonBounds() {
-		b := buttons[i]
-		bg, fg := t.Background, t.Text
-		primary := i == len(buttons)-1
+	for i, r := range bounds {
+		it := items[i]
 		switch {
-		case w.busy:
-			bg, fg = t.Surface, t.TextMuted
-		case primary && b.id == "stop":
-			bg, fg = t.Danger, t.AccentText
-		case primary:
+		case it.id == "grip":
+			dot := max(2, px(2, scale))
+			for row := -1; row <= 1; row++ {
+				for col := 0; col < 2; col++ {
+					x, y := (r.Min.X+r.Max.X)/2-dot*2+col*dot*3, (r.Min.Y+r.Max.Y)/2+row*dot*3-dot/2
+					fill(dc, image.Rect(x, y, x+dot, y+dot), rgbRef(t.TextMuted))
+				}
+			}
+			continue
+		case it.icon == "sep":
+			x := (r.Min.X + r.Max.X) / 2
+			line(dc, image.Pt(x, r.Min.Y+px(6, scale)), image.Pt(x, r.Max.Y-px(6, scale)), t.Border, 1)
+			continue
+		}
+		disabled := it.disabled || (w.busy && it.id != "")
+		bg, fg := t.Background, t.Text
+		switch {
+		case disabled:
+			fg = t.TextMuted
+		case it.primary:
 			bg, fg = t.Accent, t.AccentText
-		case i == w.hover:
+		case it.danger:
+			fg = t.Danger
+		}
+		if i == w.hover && it.id != "" && !disabled && !it.primary {
 			bg = t.SurfaceHover
-			if b.id == "cancel" {
+			if it.id == "cancel" {
 				fg = t.Danger
 			}
 		}
@@ -342,43 +469,30 @@ func (w *recordWindow) draw(dc uintptr) {
 			roundPanel(dc, r, px(4, scale), bg, bg)
 			w.opaqueButtons = append(w.opaqueButtons, opaqueSurface{r, px(4, scale)})
 		}
-		size := px(18, scale)
-		y := (r.Min.Y + r.Max.Y - size) / 2
-		switch {
-		case b.label == "":
-			x := (r.Min.X + r.Max.X - size) / 2
-			icon(dc, b.icon, image.Rect(x, y, x+size, y+size), fg)
-		case b.icon == "":
-			text(dc, b.label, r, rgbRef(fg))
-		default:
-			x := r.Min.X + px(8, scale)
-			icon(dc, b.icon, image.Rect(x, y, x+size, y+size), fg)
-			text(dc, b.label, image.Rect(x+size+px(2, scale), r.Min.Y, r.Max.X-px(3, scale), r.Max.Y), rgbRef(fg))
+		if it.label != "" {
+			text(dc, it.label, r, rgbRef(fg))
+		} else {
+			size := px(18, scale)
+			x, y := (r.Min.X+r.Max.X-size)/2, (r.Min.Y+r.Max.Y-size)/2
+			icon(dc, it.icon, image.Rect(x, y, x+size, y+size), fg)
 		}
 		if focused && i == w.focus && (w.keyboard || w.state != recordRunning) {
 			focusColor := t.Accent
-			if primary {
+			if it.primary {
 				focusColor = t.AccentText
 			}
 			frame(dc, r.Inset(px(2, scale)), focusColor, 2)
 		}
 	}
-	caption := w.caption()
 	hint := w.hover
 	if hint < 0 && focused && w.keyboard {
 		hint = w.focus
 	}
-	if hint >= 0 && hint < len(buttons) && !w.busy {
-		caption = buttons[hint].hint
+	w.hint = image.Rectangle{}
+	// Without capture exclusion a hint could be burnt into the recording.
+	if hint >= 0 && hint < len(items) && items[hint].hint != "" && w.dragMode == 0 && w.excluded {
+		w.hint = paintToolbarHint(dc, items[hint].hint, bounds[hint], window, scale, t)
 	}
-	captionColor := t.TextMuted
-	if w.state == recordRunning && !w.rec.paused.Load() && hint < 0 {
-		dot := image.Rect(bar.Min.X+px(10, scale), bar.Min.Y+px(9, scale), bar.Min.X+px(20, scale), bar.Min.Y+px(19, scale))
-		icon(dc, "record", dot, t.Danger)
-		bar.Min.X += px(14, scale)
-		captionColor = t.Text
-	}
-	textAligned(dc, caption, image.Rect(bar.Min.X+px(10, scale), px(3, scale), bar.Max.X-px(10, scale), px(25, scale)), rgbRef(captionColor), false)
 }
 
 func (w *recordWindow) drawOutline(dc uintptr, r image.Rectangle) {
@@ -392,6 +506,25 @@ func (w *recordWindow) drawOutline(dc uintptr, r image.Rectangle) {
 	}
 	frame(dc, r, t.Inverse, sourceFrameWidth)
 	frame(dc, r, color, 1)
+}
+
+// drag follows the pointer in screen pixels: the bar alone, or the region
+// together with its outline and the bar.
+func (w *recordWindow) drag() {
+	delta := cursorPoint().Sub(w.dragStart)
+	if w.dragMode == 2 {
+		desktop, r := virtualBounds(), w.dragRegion
+		delta.X = max(desktop.Min.X-r.Min.X, min(delta.X, desktop.Max.X-r.Max.X))
+		delta.Y = max(desktop.Min.Y-r.Min.Y, min(delta.Y, desktop.Max.Y-r.Max.Y))
+		w.region = r.Add(delta)
+		windowAt(w.outline, w.region.Inset(-sourceFrameWidth), false)
+	}
+	bar := w.dragBar.Add(delta)
+	if !w.excluded && bar.Overlaps(w.region) {
+		return
+	}
+	w.bar = bar
+	w.place(false)
 }
 
 func (w *recordWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
@@ -424,14 +557,30 @@ func (w *recordWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 			w.close(true)
 		}
 		return 0
-	case wmMouseMove:
-		previous := w.hover
-		w.hover = -1
-		for i, r := range w.buttonBounds() {
-			if mousePoint(lparam).In(r) {
-				w.hover = i
+	case wmLButtonDown:
+		p := mousePoint(lparam)
+		w.pressed = w.itemAt(p)
+		mode := 0
+		if items := w.items(); w.pressed < 0 || items[w.pressed].id == "" || items[w.pressed].id == "grip" {
+			if p.In(w.barLocal()) {
+				mode = 1
 			}
+		} else if items[w.pressed].id == "move" && !items[w.pressed].disabled && !w.busy {
+			mode = 2
 		}
+		if mode != 0 {
+			w.dragMode, w.dragStart, w.dragBar, w.dragRegion = mode, cursorPoint(), w.bar, w.region
+			call(user32, "SetCapture", w.hwnd)
+			invalidate(w.hwnd)
+		}
+		return 0
+	case wmMouseMove:
+		if w.dragMode != 0 {
+			w.drag()
+			return 0
+		}
+		previous := w.hover
+		w.hover = w.itemAt(mousePoint(lparam))
 		if previous != w.hover {
 			invalidate(w.hwnd)
 			// WM_MOUSELEAVE clears the hover hint when the pointer leaves the bar.
@@ -447,34 +596,44 @@ func (w *recordWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		w.hover = -1
 		invalidate(w.hwnd)
 		return 0
+	case 0x0215: // WM_CAPTURECHANGED
+		w.dragMode = 0
+		return 0
 	case wmLButtonUp:
-		for i, r := range w.buttonBounds() {
-			if mousePoint(lparam).In(r) {
-				w.focus = i
-				w.activate(w.buttons()[i].id)
-				break
-			}
+		if w.dragMode != 0 {
+			w.dragMode = 0
+			call(user32, "ReleaseCapture")
+			invalidate(w.hwnd)
+			return 0
+		}
+		items := w.items()
+		if i := w.itemAt(mousePoint(lparam)); i >= 0 && i == w.pressed && items[i].focusable() {
+			w.focus = i
+			w.activate(items[i].id)
 		}
 		return 0
 	case wmKeyDown:
-		buttons := w.buttons()
+		items := w.items()
 		switch wparam {
 		case 0x1b:
 			if w.state != recordRunning {
 				w.activate("cancel")
 			}
 		case 0x09:
-			if len(buttons) > 0 {
-				delta := 1
-				if shiftDown() {
-					delta = -1
-				}
-				w.focus, w.keyboard = (w.focus+delta+len(buttons))%len(buttons), true
-				invalidate(w.hwnd)
+			delta := 1
+			if shiftDown() {
+				delta = -1
 			}
+			for step := 1; step <= len(items); step++ {
+				if i := ((w.focus+delta*step)%len(items) + len(items)) % len(items); items[i].focusable() {
+					w.focus, w.keyboard = i, true
+					break
+				}
+			}
+			invalidate(w.hwnd)
 		case 0x0d, 0x20:
-			if w.focus >= 0 && w.focus < len(buttons) {
-				w.activate(buttons[w.focus].id)
+			if w.focus >= 0 && w.focus < len(items) && items[w.focus].focusable() {
+				w.activate(items[w.focus].id)
 			}
 		}
 		return 0
@@ -542,65 +701,4 @@ func (w *recordWindow) activate(id string) {
 		}()
 	}
 	invalidate(w.hwnd)
-}
-
-func copyFile(source, target string) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	return errors.Join(copyErr, out.Close())
-}
-
-// copyFileDrop puts the file itself (CF_HDROP) on the clipboard, the form
-// chat apps and Explorer accept for animated images.
-func copyFileDrop(owner uintptr, path string) error {
-	name, err := windows.UTF16FromString(path)
-	if err != nil {
-		return err
-	}
-	data := make([]byte, 20+len(name)*2+2) // DROPFILES, path, list terminator
-	data[0], data[16] = 20, 1              // pFiles offset, fWide
-	for i, v := range name {
-		data[20+i*2], data[21+i*2] = byte(v), byte(v>>8)
-	}
-	handle := call(kernel32, "GlobalAlloc", 2, len(data))
-	if handle == 0 {
-		return errors.New("无法分配剪贴板内存")
-	}
-	address := call(kernel32, "GlobalLock", handle)
-	if address != 0 {
-		err = windows.WriteProcessMemory(windows.CurrentProcess(), address, &data[0], uintptr(len(data)), nil)
-		call(kernel32, "GlobalUnlock", handle)
-	}
-	if address == 0 || err != nil {
-		call(kernel32, "GlobalFree", handle)
-		return errors.Join(errors.New("无法写入剪贴板内存"), err)
-	}
-	if call(user32, "OpenClipboard", owner) == 0 {
-		call(kernel32, "GlobalFree", handle)
-		return errors.New("剪贴板正被其他应用占用，请重试")
-	}
-	defer call(user32, "CloseClipboard")
-	call(user32, "EmptyClipboard")
-	if call(user32, "SetClipboardData", 15, handle) == 0 {
-		call(kernel32, "GlobalFree", handle)
-		return errors.New("写入剪贴板失败，请重试")
-	}
-	return nil
-}
-
-// FOLDERID_Videos honors relocated and OneDrive-backed Videos folders.
-func recordingDirectory() (string, error) {
-	dir, err := knownFolder(windows.GUID{Data1: 0x18989B1D, Data2: 0x99B5, Data3: 0x455B, Data4: [8]byte{0x84, 0x1C, 0xAB, 0x7C, 0x74, 0xE4, 0xDD, 0xFC}})
-	if err != nil {
-		return "", errors.New("无法定位系统视频文件夹")
-	}
-	return filepath.Join(dir, "FluentLauncher"), nil
 }

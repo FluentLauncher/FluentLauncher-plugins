@@ -211,7 +211,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 		w := d.recording
 		invalidate(w.hwnd)
 		call(user32, "UpdateWindow", w.hwnd)
-		img, err := w.paintBuffer.pixels()
+		img, err := w.layeredImage()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 			t.Fatal("recording bar did not open", reported)
 		}
 		w := d.recording
-		if w.bounds.Overlaps(region) || !w.bounds.In(monitor) || w.outline == 0 || !d.capturing.Load() || d.active.Load() != 1 {
+		if w.bar.Overlaps(region) || !w.bounds.In(monitor) || w.barLocal().Size() != w.barSize() || w.outline == 0 || !d.capturing.Load() || d.active.Load() != 1 {
 			t.Fatalf("setup: bar %v region %v active %d", w.bounds, region, d.active.Load())
 		}
 		w.activate("fps")
@@ -249,14 +249,31 @@ func TestNativeRecordingFlow(t *testing.T) {
 			t.Fatal("setup choices were not saved")
 		}
 		snapshot("record-" + name + "-setup")
-		// Enter on the focused primary button starts; Tab moves the focus.
-		w.handle(wmKeyDown, 0x09, 0)
-		w.handle(wmKeyDown, 0x09, 0)
-		w.handle(wmKeyDown, 0x0d, 0)
-		if w.state != recordSetup {
-			t.Fatal("Enter on a setup option started the recording")
+		// Tab skips the disabled pause button; Enter acts on the focused item.
+		if w.items()[w.focus].id != "start" {
+			t.Fatal("the record button is not the default focus")
 		}
-		w.focus = len(w.buttons()) - 1
+		w.handle(wmKeyDown, 0x09, 0)
+		if w.items()[w.focus].id != "move" || !w.keyboard {
+			t.Fatalf("Tab moved the focus to %q", w.items()[w.focus].id)
+		}
+		fps := d.preferences.Recording.GIFFPS
+		w.focus = w.itemIndex("fps")
+		w.handle(wmKeyDown, 0x0d, 0)
+		if w.state != recordSetup || d.preferences.Recording.GIFFPS == fps {
+			t.Fatal("Enter on the frame rate must change it, not start")
+		}
+		// Dragging the move button shifts region, outline and bar together.
+		before, barBefore := w.region, w.bar
+		w.dragMode, w.dragStart, w.dragBar, w.dragRegion = 2, cursorPoint().Sub(image.Pt(24, 16)), w.bar, w.region
+		w.drag()
+		w.dragMode = 0
+		var outline rect
+		call(user32, "GetWindowRect", w.outline, ptr(&outline))
+		if w.region != before.Add(image.Pt(24, 16)) || w.bar != barBefore.Add(image.Pt(24, 16)) || outline.image() != w.region.Inset(-sourceFrameWidth) {
+			t.Fatalf("move: region %v bar %v outline %v", w.region, w.bar, outline.image())
+		}
+		w.focus = w.itemIndex("start")
 		w.handle(wmKeyDown, 0x0d, 0)
 		if w.state != recordRunning || w.handle(0x0021, 0, 0) != 3 {
 			t.Fatal("recording did not start or the bar would take focus on click")
@@ -264,7 +281,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 		pumpRecordMessages(t, d, func() bool { return w.rec.elapsed.Load() > int64(300*time.Millisecond) })
 		snapshot("record-" + name + "-running")
 		w.activate("pause")
-		if !w.rec.paused.Load() || w.buttons()[0].label != "继续" {
+		if !w.rec.paused.Load() || w.items()[w.itemIndex("pause")].icon != "start" || w.items()[w.itemIndex("move")].focusable() {
 			t.Fatal("pause")
 		}
 		snapshot("record-" + name + "-paused")
@@ -275,7 +292,7 @@ func TestNativeRecordingFlow(t *testing.T) {
 		}
 		pumpRecordMessages(t, d, func() bool { return w.state == recordDone })
 		snapshot("record-" + name + "-done")
-		if w.outline != 0 || d.capturing.Load() || d.active.Load() != 1 || len(w.buttons()) != 5 {
+		if w.outline != 0 || d.capturing.Load() || d.active.Load() != 1 || w.itemIndex("open") < 0 || w.barLocal().Size() != w.barSize() {
 			t.Fatalf("done: outline %d capturing %v active %d", w.outline, d.capturing.Load(), d.active.Load())
 		}
 		data, err := os.ReadFile(w.path)
@@ -369,10 +386,10 @@ func TestNativeScreenSourceMatchesDesktop(t *testing.T) {
 	pin.state.Shadow = false
 	pin.syncWindow()
 	// The whole monitor is the region, so the bar must sit on top of it.
-	if !d.startRecording(monitor, 0) || !d.recording.bounds.Overlaps(monitor) {
+	if !d.startRecording(monitor, 0) || !d.recording.bar.In(monitor) {
 		t.Fatal("full-monitor recording bar")
 	}
-	bar := d.recording.bounds
+	bar := d.recording.bar
 	var msg message
 	for i := 0; i < 20; i++ {
 		for call(user32, "PeekMessageW", ptr(&msg), 0, 0, 0, 1) != 0 {

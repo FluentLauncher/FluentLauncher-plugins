@@ -16,10 +16,11 @@ const (
 	snapBudget  = 4000 // windows visited per capture, a guard against pathological trees
 	snapDepth   = 8
 
-	// Leaving a part for its container takes both: the pointer rests for the
-	// delay within the margin, or moves further away than the margin.
+	// The highlight grows from a part to its container only after the pointer
+	// has rested for the delay. A press next to the part (within the margin)
+	// still selects the part; a press further away selects what is under it.
 	snapStickMargin = 8 // DIP
-	snapStickDelay  = 250 * time.Millisecond
+	snapStickDelay  = 180 * time.Millisecond
 	snapStickTimer  = 1
 )
 
@@ -130,21 +131,27 @@ func (s *selectionWindow) snapPath() []image.Rectangle {
 	return s.snapSettle(chain, p)
 }
 
-// snapSettle keeps the highlight on a small part while the pointer wobbles
-// around its edge. Moving to a smaller or unrelated part is followed at once;
-// only growing to a container next to the part waits for the pointer to rest.
-// A press freezes the choice, so a click selects what was highlighted.
+// snapSettle keeps the highlight on a part while the pointer travels over
+// its container. Moving to a smaller or unrelated part is followed at once;
+// growing to a container waits until the pointer has stopped moving.
 func (s *selectionWindow) snapSettle(chain []image.Rectangle, p image.Point) []image.Rectangle {
-	if held := s.snapHeld; len(held) > 0 && snapRetreat(held[len(held)-1], chain[len(chain)-1], p, px(snapStickMargin, uiScale(s.hwnd))) {
-		if s.snapLeft.IsZero() {
-			s.snapLeft = time.Now()
-			if s.hwnd != 0 {
-				// Repaint once the pointer has rested; mouse moves do the rest.
-				call(user32, "SetTimer", s.hwnd, snapStickTimer, uint32(snapStickDelay/time.Millisecond)+20, 0)
+	if held := s.snapHeld; len(held) > 0 && snapRetreat(held[len(held)-1], chain[len(chain)-1], p) {
+		leaf := held[len(held)-1]
+		if s.dragMode != 0 {
+			if p.In(leaf.Inset(-px(snapStickMargin, uiScale(s.hwnd)))) {
+				return held
 			}
-		}
-		if s.dragMode != 0 || time.Since(s.snapLeft) < snapStickDelay {
-			return held
+		} else {
+			if s.snapLeft.IsZero() || p != s.snapRest {
+				s.snapLeft, s.snapRest = time.Now(), p
+				if s.hwnd != 0 {
+					// Repaint once the pointer has rested; setting it again restarts it.
+					call(user32, "SetTimer", s.hwnd, snapStickTimer, uint32(snapStickDelay/time.Millisecond)+20, 0)
+				}
+			}
+			if time.Since(s.snapLeft) < snapStickDelay {
+				return held
+			}
 		}
 	}
 	s.snapHeld, s.snapLeft = chain, time.Time{}

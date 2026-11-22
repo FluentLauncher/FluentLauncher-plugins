@@ -25,7 +25,8 @@ type selectionWindow struct {
 	snapOff                   bool // the current press moved far enough to be a drag
 	snapLeaf                  image.Rectangle
 	snapHeld                  []image.Rectangle // the path being highlighted, kept through jitter at its edge
-	snapLeft                  time.Time         // when the pointer slipped off the held part; zero while on it
+	snapLeft                  time.Time         // when the pointer last moved while off the held part; zero while on it
+	snapRest                  image.Point       // where it was at that moment
 	snapLevel                 int               // steps outward from the smallest part, chosen with the wheel
 	closed                    atomic.Bool       // tells background work that this selection is gone
 	preferPin                 bool

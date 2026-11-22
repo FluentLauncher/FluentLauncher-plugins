@@ -1,7 +1,7 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": [

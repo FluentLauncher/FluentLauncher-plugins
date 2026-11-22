@@ -1,7 +1,7 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.11.2",
+  "version": "1.12.0",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": [
@@ -34,6 +34,21 @@
       "defaultShortcuts": [
         "Ctrl+Alt+P"
       ]
+    },
+    {
+      "id": "delay-3",
+      "title": "延时 3 秒截图",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+D"
+      ]
+    },
+    {
+      "id": "delay-5",
+      "title": "延时 5 秒截图",
+      "scope": "global",
+      "activation": "invoke"
     },
     {
       "id": "ocr",

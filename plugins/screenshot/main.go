@@ -20,6 +20,8 @@ type menuEntry struct{ id, title, subtitle string }
 var entries = []menuEntry{
 	{"region", "区域截图", "拖选并调整 · Enter 复制 / Ctrl+S 保存 / P 贴图 / Esc 取消"},
 	{"region-pin", "区域截图并原地贴图", "确认后原位覆盖 · 默认阴影 · 点击后方向键微调"},
+	{"delay-3", "延时 3 秒截图", "倒计时结束后冻结画面再拖选 · 用来截右键菜单、悬停提示 · 再次执行或点击倒计时取消"},
+	{"delay-5", "延时 5 秒截图", "倒计时结束后冻结画面再拖选 · 用来截右键菜单、悬停提示 · 再次执行或点击倒计时取消"},
 	{"ocr", "区域文字识别", "拖选后 Enter 识别文字并复制 · 使用 Windows 自带的识别，不联网"},
 	{"pin-clipboard", "贴出剪贴板图片", "把剪贴板里的图片作为贴图显示在鼠标所在的显示器中央"},
 	{"screen", "当前显示器截图", "复制鼠标所在显示器的画面，默认包含已有贴图"},
@@ -94,6 +96,9 @@ func (h handler) execute(ctx context.Context, id string) error {
 			return err
 		}
 		return nil
+	}
+	if seconds := delaySeconds[id]; seconds > 0 {
+		return h.desktop.post(func() { h.desktop.toggleDelay(seconds) })
 	}
 	return h.desktop.post(func() { h.desktop.command(id) })
 }

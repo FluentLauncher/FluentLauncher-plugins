@@ -28,6 +28,7 @@ type desktop struct {
 	selection   *selectionWindow
 	scrolling   *scrollWindow
 	recording   *recordWindow
+	delaying    *delayWindow
 	preferences preferences
 	theme       pluginsdk.Theme
 	popups      map[uintptr]*popupWindow
@@ -43,6 +44,8 @@ type desktop struct {
 	ocr         func(*image.RGBA) (string, error)
 	textOut     func(string) error
 	pastedImage func() (*image.RGBA, error)
+	// Tests replace the capture that follows a delay; nil captures the desktop.
+	captureAfterDelay func()
 }
 
 func (d *desktop) recognize(img *image.RGBA) (string, error) {
@@ -92,7 +95,7 @@ func newDesktop() (*desktop, error) {
 	d := &desktop{jobs: make(chan func(), 64), done: make(chan struct{}), pins: make(map[uintptr]*pinWindow), preferences: loadPreferences(), theme: defaultTheme(), popups: make(map[uintptr]*popupWindow)}
 	gui = d
 	callback := windows.NewCallback(windowProcedure)
-	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline", "FLScreenshotRecord", "FLScreenshotMarks"} {
+	for _, name := range []string{"FLScreenshotController", "FLScreenshotSelection", "FLScreenshotPin", "FLScreenshotShadow", "FLScreenshotMenu", "FLScreenshotLong", "FLScreenshotOutline", "FLScreenshotRecord", "FLScreenshotMarks", "FLScreenshotDelay"} {
 		wc := wndClass{Size: uint32(unsafe.Sizeof(wndClass{})), Style: 0x0008, Proc: callback,
 			Instance: call(kernel32, "GetModuleHandleW", 0), Cursor: call(user32, "LoadCursorW", 0, 32512), Name: u16(name)}
 		if call(user32, "RegisterClassExW", ptr(&wc)) == 0 {
@@ -184,6 +187,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	if w := d.recording; w != nil && hwnd == w.outline {
 		return outlineMessage(hwnd, w.region, w.drawOutline, msg, wparam, lparam)
 	}
+	if w := d.delaying; w != nil && hwnd == w.hwnd {
+		return w.handle(msg, wparam, lparam)
+	}
 	if p := d.popups[hwnd]; p != nil {
 		return p.handle(msg, wparam, lparam)
 	}
@@ -202,6 +208,9 @@ func (d *desktop) shutdown() {
 	}
 	if d.selection != nil {
 		d.selection.close()
+	}
+	if d.delaying != nil {
+		d.delaying.cancel()
 	}
 	if d.scrolling != nil {
 		d.scrolling.close(true)

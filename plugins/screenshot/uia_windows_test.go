@@ -308,3 +308,66 @@ func TestNativeSnapRefinesWhileSelectionIsOpen(t *testing.T) {
 		t.Fatal("closed selection is not marked for background work")
 	}
 }
+
+// A single word inside a large panel: jitter around the word's edge must not
+// flip the highlight between the word and the whole panel.
+func TestSnapHoldsSmallPartThroughEdgeJitter(t *testing.T) {
+	s := snapFixture()
+	origin := s.desktopBounds.Min
+	s.d.preferences.SnapElements = true
+	s.snaps[0].loose = true
+	word, other := image.Rect(200, 200, 230, 220), image.Rect(200, 226, 260, 246)
+	s.snaps[0].children = []snapTarget{{bounds: word.Add(origin), loose: true}, {bounds: other.Add(origin), loose: true}}
+	window := image.Rect(100, 100, 400, 300)
+	at := func(x, y int) image.Rectangle { s.cursor = image.Pt(x, y); return s.snapCandidate() }
+
+	if at(150, 150) != window || at(210, 210) != word {
+		t.Fatal("entering a smaller part is not immediate")
+	}
+	for _, p := range []image.Point{{232, 210}, {199, 205}, {215, 223}, {236, 224}, {210, 210}, {231, 199}} {
+		if got := at(p.X, p.Y); got != word {
+			t.Fatalf("jitter at %v switched to %v", p, got)
+		}
+	}
+	// The next line of text is a different part, not a container: no waiting.
+	if at(215, 223) != word || at(215, 230) != other {
+		t.Fatal("moving to a neighbouring part must be immediate")
+	}
+	// Further away than the margin: the container at once.
+	at(210, 210)
+	if at(300, 150) != window {
+		t.Fatal("moving well away kept the old part")
+	}
+	// Resting beside the part grows to the container after the delay.
+	at(210, 210)
+	if at(233, 210) != word || s.snapLeft.IsZero() {
+		t.Fatal("slipping off did not start the wait")
+	}
+	s.snapLeft = time.Now().Add(-snapStickDelay)
+	if at(233, 210) != window || !s.snapLeft.IsZero() {
+		t.Fatal("resting beside the part never reached the container")
+	}
+	// Coming back onto the part cancels the wait.
+	at(210, 210)
+	at(233, 210)
+	if at(210, 210) != word || !s.snapLeft.IsZero() {
+		t.Fatal("returning did not cancel the wait")
+	}
+	// A press beside the part selects what is highlighted, however long it is held.
+	at(233, 210)
+	s.snapLeft = time.Now().Add(-time.Hour)
+	s.anchor, s.dragMode = image.Pt(233, 210), 1
+	if got := s.snapCandidate(); got != word {
+		t.Fatal("press changed the highlighted part:", got)
+	}
+	s.dragMode = 0
+	// The wheel level survives jitter as well.
+	at(210, 210)
+	s.snapLevel = 1
+	if at(210, 210) != window || at(233, 210) != window || s.snapLevel != 1 || at(210, 210) != window {
+		t.Fatal("jitter reset the level chosen with the wheel")
+	}
+	if !snapRetreat(word, window, image.Pt(235, 210), 8) || snapRetreat(word, window, image.Pt(245, 210), 8) || snapRetreat(word, other, image.Pt(215, 223), 8) || snapRetreat(window, word, image.Pt(210, 210), 8) {
+		t.Fatal("snapRetreat")
+	}
+}

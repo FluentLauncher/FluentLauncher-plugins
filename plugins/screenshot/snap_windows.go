@@ -5,6 +5,7 @@ package main
 import (
 	"image"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -14,6 +15,12 @@ const (
 	snapSlop    = 4    // a press that moves less than this is a click on the highlighted window
 	snapBudget  = 4000 // windows visited per capture, a guard against pathological trees
 	snapDepth   = 8
+
+	// Leaving a part for its container takes both: the pointer rests for the
+	// delay within the margin, or moves further away than the margin.
+	snapStickMargin = 8 // DIP
+	snapStickDelay  = 250 * time.Millisecond
+	snapStickTimer  = 1
 )
 
 func windowClass(hwnd uintptr) string {
@@ -106,6 +113,7 @@ func snapChildren(parent uintptr, clip image.Rectangle, depth int, budget *int) 
 // press until it turns into a drag. Coordinates are in desktop pixels.
 func (s *selectionWindow) snapPath() []image.Rectangle {
 	if len(s.snaps) == 0 || !s.d.preferences.SnapWindows || s.busy || s.snapOff || s.dragMode > 1 || !s.selected.Empty() {
+		s.snapHeld, s.snapLeft = nil, time.Time{}
 		return nil
 	}
 	p := s.cursor
@@ -115,11 +123,31 @@ func (s *selectionWindow) snapPath() []image.Rectangle {
 	p = p.Add(s.desktopBounds.Min)
 	chain := snapChain(s.snaps, p)
 	if len(chain) == 0 {
-		return []image.Rectangle{currentMonitor(p)} // bare desktop
+		chain = []image.Rectangle{currentMonitor(p)} // bare desktop
+	} else if !s.d.preferences.SnapElements {
+		chain = chain[:1]
 	}
-	if !s.d.preferences.SnapElements {
-		return chain[:1]
+	return s.snapSettle(chain, p)
+}
+
+// snapSettle keeps the highlight on a small part while the pointer wobbles
+// around its edge. Moving to a smaller or unrelated part is followed at once;
+// only growing to a container next to the part waits for the pointer to rest.
+// A press freezes the choice, so a click selects what was highlighted.
+func (s *selectionWindow) snapSettle(chain []image.Rectangle, p image.Point) []image.Rectangle {
+	if held := s.snapHeld; len(held) > 0 && snapRetreat(held[len(held)-1], chain[len(chain)-1], p, px(snapStickMargin, uiScale(s.hwnd))) {
+		if s.snapLeft.IsZero() {
+			s.snapLeft = time.Now()
+			if s.hwnd != 0 {
+				// Repaint once the pointer has rested; mouse moves do the rest.
+				call(user32, "SetTimer", s.hwnd, snapStickTimer, uint32(snapStickDelay/time.Millisecond)+20, 0)
+			}
+		}
+		if s.dragMode != 0 || time.Since(s.snapLeft) < snapStickDelay {
+			return held
+		}
 	}
+	s.snapHeld, s.snapLeft = chain, time.Time{}
 	return chain
 }
 

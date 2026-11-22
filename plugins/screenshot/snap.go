@@ -50,6 +50,14 @@ func (t snapTarget) chain(chain []image.Rectangle, p image.Point) []image.Rectan
 	return chain
 }
 
+// snapRetreat reports that the pointer slipped off a small part onto something
+// that contains it while staying next to the part. Following such a move at
+// once would light up and dim the whole container with every pixel of jitter.
+func snapRetreat(held, next image.Rectangle, p image.Point, margin int) bool {
+	// A pointer still on the held part means the recorded parts changed under it.
+	return held != next && held.In(next) && !p.In(held) && p.In(held.Inset(-margin))
+}
+
 // snapAt is the smallest part under p; empty when no recorded window contains it.
 func snapAt(targets []snapTarget, p image.Point) image.Rectangle {
 	if chain := snapChain(targets, p); len(chain) > 0 {

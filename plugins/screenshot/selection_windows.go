@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"sync/atomic"
+	"time"
 )
 
 type selectionWindow struct {
@@ -23,8 +24,10 @@ type selectionWindow struct {
 	snaps                     []snapTarget
 	snapOff                   bool // the current press moved far enough to be a drag
 	snapLeaf                  image.Rectangle
-	snapLevel                 int         // steps outward from the smallest part, chosen with the wheel
-	closed                    atomic.Bool // tells background work that this selection is gone
+	snapHeld                  []image.Rectangle // the path being highlighted, kept through jitter at its edge
+	snapLeft                  time.Time         // when the pointer slipped off the held part; zero while on it
+	snapLevel                 int               // steps outward from the smallest part, chosen with the wheel
+	closed                    atomic.Bool       // tells background work that this selection is gone
 	preferPin                 bool
 	preferRecord              bool // opened by the record command: Enter starts recording
 	preferOCR                 bool // opened by the text command: Enter recognizes and copies text
@@ -151,6 +154,12 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		call(gdi32, "SetTextColor", wparam, rgbRef(s.ink))
 		call(gdi32, "SetBkColor", wparam, rgbRef(s.d.theme.Background))
 		return s.editBrush
+	case 0x0113: // WM_TIMER: a held snap may now grow to its container
+		if wparam == snapStickTimer {
+			call(user32, "KillTimer", s.hwnd, snapStickTimer)
+			invalidate(s.hwnd)
+		}
+		return 0
 	case wmMouseWheel:
 		if !s.busy && s.dragMode == 0 {
 			s.snapWheel(int16(wparam>>16) > 0)

@@ -20,7 +20,15 @@ func (s *scrollWindow) showPreview() {
 
 func (s *scrollWindow) toolbar() image.Rectangle {
 	scale := uiScale(s.hwnd)
-	return image.Rect(0, s.bounds.Dy()-px(64, scale), s.bounds.Dx(), s.bounds.Dy())
+	return image.Rect(0, s.bounds.Dy()-px(40, scale), s.bounds.Dx(), s.bounds.Dy())
+}
+
+// closeAction leaves the capture or the result; it is the one that turns red.
+func (s *scrollWindow) closeAction() int {
+	if s.preview {
+		return 4
+	}
+	return 2
 }
 
 // Visual order keeps the destructive action away from the confirmation at
@@ -32,16 +40,20 @@ func (s *scrollWindow) buttonActions() []int {
 	return []int{0, 2, 1}
 }
 
+// One row like the recording bar: the caption takes the left, square icon
+// buttons are packed to the right. The result bar sets "close" apart with a
+// separator; while capturing, the accented "finish" already ends the row.
 func (s *scrollWindow) buttons() []image.Rectangle {
-	scale := uiScale(s.hwnd)
-	pad, gap, h := px(6, scale), px(4, scale), px(32, scale)
-	count := len(s.buttonActions())
-	w := (s.bounds.Dx() - pad*2 - gap*(count-1)) / count
-	result := make([]image.Rectangle, count)
-	y := s.bounds.Dy() - pad - h
-	for i := range result {
-		x := pad + i*(w+gap)
-		result[i] = image.Rect(x, y, x+w, y+h)
+	scale, bar := uiScale(s.hwnd), s.toolbar()
+	pad, size := px(4, scale), px(32, scale)
+	result := make([]image.Rectangle, len(s.buttonActions()))
+	x := bar.Max.X - pad
+	for i := len(result) - 1; i >= 0; i-- {
+		result[i] = image.Rect(x-size, bar.Min.Y+pad, x, bar.Max.Y-pad)
+		x -= size
+		if s.preview && i == len(result)-1 {
+			x -= px(9, scale)
+		}
 	}
 	return result
 }
@@ -185,66 +197,54 @@ func (s *scrollWindow) draw(dc uintptr) {
 	bar := s.toolbar()
 	surfacePanel(dc, bar, px(int(t.Radius), scale), t)
 	s.opaqueButtons = nil
-	labels := []string{"暂停", "完成", "取消"}
-	icons := []string{"pause", "check", "close"}
-	if s.paused.Load() {
-		labels[0] = "继续"
-	}
+	icons, primary := []string{"pause", "check", "close"}, 1
 	if s.preview {
-		labels = []string{"复制", "保存", "贴图", "继续", "关闭"}
-		icons = []string{"copy", "save", "pin", "start", "close"}
+		icons, primary = []string{"copy", "save", "pin", "start", "close"}, 0
 	}
-	for i, r := range s.buttons() {
+	buttons := s.buttons()
+	for i, r := range buttons {
 		action := s.buttonActions()[i]
+		disabled := s.busy || (!s.preview && s.finishRequested.Load() && action != 2)
 		bg, fg := t.Background, t.Text
-		disabled := s.busy
-		if !s.preview && s.finishRequested.Load() && action != 2 {
-			disabled = true
-		}
-		if i == s.hover && !disabled {
-			bg = t.SurfaceHover
-		}
-		primary := 1
-		if s.preview {
-			primary = 0
-		}
-		if action == primary {
-			bg, fg = t.Accent, t.AccentText
-		}
-		if disabled {
+		switch {
+		case disabled:
 			fg = t.TextMuted
-			bg = t.Surface
+		case action == primary:
+			bg, fg = t.Accent, t.AccentText
+		case i == s.hover:
+			bg = t.SurfaceHover
+			if action == s.closeAction() {
+				fg = t.Danger
+			}
 		}
-		if action == 2 && !s.preview && i == s.hover {
-			fg = t.Danger
-		}
-		if disabled || i == s.hover || action == primary {
+		if bg != t.Background {
 			roundPanel(dc, r, px(4, scale), bg, bg)
 			s.opaqueButtons = append(s.opaqueButtons, opaqueSurface{r, px(4, scale)})
 		}
 		size := px(18, scale)
-		x := (r.Min.X + r.Max.X - size) / 2
-		if !s.preview {
-			x = r.Min.X + px(9, scale)
-		}
-		y := (r.Min.Y + r.Max.Y - size) / 2
+		x, y := (r.Min.X+r.Max.X-size)/2, (r.Min.Y+r.Max.Y-size)/2
 		iconName := icons[action]
 		if !s.preview && action == 0 && s.paused.Load() {
 			iconName = "start"
 		}
 		icon(dc, iconName, image.Rect(x, y, x+size, y+size), fg)
-		if !s.preview {
-			text(dc, labels[action], image.Rect(x+size+px(4, scale), r.Min.Y, r.Max.X-px(3, scale), r.Max.Y), rgbRef(fg))
-		}
 		if call(user32, "GetFocus") == s.hwnd && i == s.focus {
 			focusColor := t.Accent
-			if action == primary {
+			if action == primary && !disabled {
 				focusColor = t.AccentText
 			}
 			frame(dc, r.Inset(px(2, scale)), focusColor, 2)
 		}
 	}
+	if n := len(buttons); s.preview {
+		x := (buttons[n-2].Max.X + buttons[n-1].Min.X) / 2
+		line(dc, image.Pt(x, bar.Min.Y+px(10, scale)), image.Pt(x, bar.Max.Y-px(10, scale)), t.Border, 1)
+	}
 	caption := fmt.Sprintf("%d × %d · %d 帧", s.region.Dx(), max(s.region.Dy(), s.height), max(1, s.frames))
+	if s.preview && s.result != nil {
+		// The result bar has less room; the size is what matters once it is done.
+		caption = fmt.Sprintf("%d × %d", s.result.Rect.Dx(), s.result.Rect.Dy())
+	}
 	if s.paused.Load() {
 		caption = "已暂停 · " + caption
 	}
@@ -264,7 +264,7 @@ func (s *scrollWindow) draw(dc uintptr) {
 	if hint := s.buttonHint(hintIndex); hint != "" && !s.busy && (s.preview || (!s.finishRequested.Load() && s.notice == "")) {
 		caption = hint
 	}
-	textAligned(dc, caption, image.Rect(bar.Min.X+px(10, scale), bar.Min.Y+px(3, scale), bar.Max.X-px(10, scale), bar.Min.Y+px(25, scale)), rgbRef(t.TextMuted), false)
+	textAligned(dc, caption, image.Rect(bar.Min.X+px(12, scale), bar.Min.Y, buttons[0].Min.X-px(6, scale), bar.Max.Y), rgbRef(t.TextMuted), false)
 	if !s.preview {
 		if s.thumbnail != nil {
 			s.thumbnail.draw(dc, s.imageDestination(), image.Rect(0, 0, s.thumbnail.width, s.thumbnail.height))

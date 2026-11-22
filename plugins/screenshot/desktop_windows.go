@@ -260,6 +260,8 @@ func (d *desktop) startCapture(id string) {
 		time.Sleep(100 * time.Millisecond)
 		call(dwmapi, "DwmFlush")
 		img, err := captureScreen(bounds)
+		// Windows are listed with the frame they belong to, not when hovered later.
+		targets := snapTargets()
 		_ = d.post(func() {
 			if excludePins {
 				for _, hwnd := range d.pinOrder {
@@ -278,7 +280,7 @@ func (d *desktop) startCapture(id string) {
 					d.report(d.controller, err)
 				}
 				if d.selection != nil {
-					d.selection.preferRecord = id == "record"
+					d.selection.preferRecord, d.selection.snaps = id == "record", targets
 					invalidate(d.selection.hwnd)
 				}
 				return
@@ -340,6 +342,7 @@ func (d *desktop) settingsMenu() {
 		{ID: 2, Label: "新贴图显示阴影", Checked: d.preferences.NewPinShadow},
 		{ID: 3, Label: "录制时包含鼠标指针", Checked: d.preferences.Recording.Cursor},
 		{ID: 4, Label: "录制前倒计时 3 秒", Checked: d.preferences.Recording.Countdown},
+		{ID: 5, Label: "截图时自动吸附窗口", Checked: d.preferences.SnapWindows},
 	}, func(id int) {
 		previous := d.preferences
 		switch id {
@@ -351,6 +354,8 @@ func (d *desktop) settingsMenu() {
 			d.preferences.Recording.Cursor = !d.preferences.Recording.Cursor
 		case 4:
 			d.preferences.Recording.Countdown = !d.preferences.Recording.Countdown
+		case 5:
+			d.preferences.SnapWindows = !d.preferences.SnapWindows
 		}
 		if err := savePreferences(d.preferences); err != nil {
 			d.preferences = previous

@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"image"
 )
 
@@ -18,6 +19,8 @@ type selectionWindow struct {
 	anchor                    image.Point
 	dragStart                 image.Rectangle
 	dragMode                  int // 0 idle, 1 new, 2 move, 4/8/16/32 resize edges
+	snaps                     []snapTarget
+	snapOff                   bool // the current press moved far enough to be a drag
 	preferPin                 bool
 	preferRecord              bool // opened by the record command: Enter starts recording
 	busy                      bool
@@ -135,7 +138,7 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		return 0
 	case 0x0215:
-		s.dragMode = 0
+		s.dragMode, s.snapOff = 0, false
 		s.draft = nil
 		return 0
 	case 0x0133: // WM_CTLCOLOREDIT: native edit keeps IME support.
@@ -235,7 +238,10 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		if s.dragMode != 0 {
 			s.drag(mousePoint(lparam))
-			s.dragMode = 0
+			if r := s.snapCandidate(); !r.Empty() {
+				s.selected = r // released without dragging: take the highlighted window
+			}
+			s.dragMode, s.snapOff = 0, false
 			call(user32, "ReleaseCapture")
 			invalidate(s.hwnd)
 		}
@@ -360,6 +366,10 @@ func (s *selectionWindow) drag(p image.Point) {
 	r := s.dragStart
 	switch s.dragMode {
 	case 1:
+		if !s.snapCandidate().Empty() && abs(p.X-s.anchor.X) < snapSlop && abs(p.Y-s.anchor.Y) < snapSlop {
+			return // still a click on the highlighted window
+		}
+		s.snapOff = true
 		r = orderedRect(s.anchor, p)
 	case 2:
 		delta := p.Sub(s.anchor)
@@ -407,9 +417,15 @@ func (s *selectionWindow) draw(dc uintptr) {
 		}
 		call(gdi32, "RestoreDC", dc, coord(-1))
 	} else {
+		hint := "拖选截图区域，拖动边缘调整大小 · Esc / 右键取消"
+		if snap := s.snapCandidate(); !snap.Empty() {
+			s.background.draw(dc, snap, snap)
+			frame(dc, snap, s.d.theme.Accent, 2)
+			hint = fmt.Sprintf("%d × %d · 单击选中窗口，拖动自选区域 · Esc / 右键取消", snap.Dx(), snap.Dy())
+		}
 		r := image.Rect(16, 16, min(s.image.Rect.Dx()-16, 650), 52)
 		roundPanel(dc, r, px(int(s.d.theme.Radius), uiScale(s.hwnd)), s.d.theme.Background, s.d.theme.Border)
-		text(dc, "拖选截图区域，拖动边缘调整大小 · Esc / 右键取消", r, rgbRef(s.d.theme.Text))
+		text(dc, hint, r, rgbRef(s.d.theme.Text))
 	}
 	if !s.busy && s.tool == "" && s.toolbarHover < 0 && (s.dragMode != 0 || s.selected.Empty() || s.hitTest(s.cursor) > 2) {
 		s.paintMagnifier(dc)
@@ -449,7 +465,7 @@ func (s *selectionWindow) output(kind string) {
 			} else {
 				restored := s.d.selection
 				restored.selected, restored.marks, restored.redo, restored.tool = s.selected, s.marks, s.redo, s.tool
-				restored.ink, restored.strokeWidth, restored.preferRecord = s.ink, s.strokeWidth, s.preferRecord
+				restored.ink, restored.strokeWidth, restored.preferRecord, restored.snaps = s.ink, s.strokeWidth, s.preferRecord, s.snaps
 				s.d.capturing.Store(true)
 			}
 		}

@@ -39,6 +39,48 @@ type desktop struct {
 	recordSource func(region image.Rectangle, out image.Point) (frameSource, error)
 	recordDir    string
 	recordAudio  func(loopback bool) (audioSource, error)
+	// Tests replace the recognizer and both directions of the user's clipboard.
+	ocr         func(*image.RGBA) (string, error)
+	textOut     func(string) error
+	pastedImage func() (*image.RGBA, error)
+}
+
+func (d *desktop) recognize(img *image.RGBA) (string, error) {
+	if d.ocr != nil {
+		return d.ocr(img)
+	}
+	return recognizeText(img)
+}
+
+func (d *desktop) writeText(text string) error {
+	if d.textOut != nil {
+		return d.textOut(text)
+	}
+	return copyText(d.controller, text)
+}
+
+// pinClipboard shows the picture on the clipboard as a pin on the monitor
+// under the pointer. Reading and decoding stay off the GUI thread.
+func (d *desktop) pinClipboard() {
+	monitor := currentMonitor(cursorPoint())
+	d.active.Add(1)
+	go func() {
+		var img *image.RGBA
+		var err error
+		if d.pastedImage != nil {
+			img, err = d.pastedImage()
+		} else {
+			img, err = readClipboardImage(d.controller)
+		}
+		_ = d.post(func() {
+			defer d.active.Add(-1)
+			if err == nil {
+				shown := pastedPinBounds(img.Rect.Size(), monitor)
+				_, err = d.openPinAt(img, image.Rectangle{Min: shown.Min, Max: shown.Min.Add(img.Rect.Size())}, shown)
+			}
+			d.report(d.controller, err)
+		})
+	}()
 }
 
 // Accessed only on the locked GUI thread, including synchronous Win32 callbacks.
@@ -206,6 +248,8 @@ func (d *desktop) command(id string) {
 		}
 	case "settings":
 		d.settingsMenu()
+	case "pin-clipboard":
+		d.pinClipboard()
 	case "record-stop":
 		if d.recording != nil {
 			d.recording.stop()
@@ -274,13 +318,13 @@ func (d *desktop) startCapture(id string) {
 				d.report(d.controller, err)
 				return
 			}
-			if id == "region" || id == "region-pin" || id == "record" || id == "scroll-auto" || id == "scroll-manual" {
+			if id == "region" || id == "region-pin" || id == "record" || id == "ocr" || id == "scroll-auto" || id == "scroll-manual" {
 				if err := d.openSelection(img, bounds, id == "region-pin", originalFocus); err != nil {
 					d.capturing.Store(false)
 					d.report(d.controller, err)
 				}
 				if d.selection != nil {
-					d.selection.preferRecord, d.selection.snaps = id == "record", targets
+					d.selection.preferRecord, d.selection.preferOCR, d.selection.snaps = id == "record", id == "ocr", targets
 					invalidate(d.selection.hwnd)
 				}
 				return

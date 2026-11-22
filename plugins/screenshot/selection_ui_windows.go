@@ -13,7 +13,7 @@ var captureTools = []captureTool{
 	{"rect", "矩形", "R"}, {"ellipse", "椭圆", "E"}, {"arrow", "箭头", "A"},
 	{"pen", "画笔", "B"}, {"mosaic", "马赛克", "M"}, {"text", "文字", "T"},
 	{"undo", "撤销", "Ctrl+Z"}, {"redo", "重做", "Ctrl+Y"},
-	{"scroll", "滚动截图", "L"}, {"record", "录制", "V"}, {"pin", "原地贴图", "P"}, {"save", "保存", "Ctrl+S"},
+	{"scroll", "滚动截图", "L"}, {"record", "录制", "V"}, {"ocr", "识别文字并复制", "O"}, {"pin", "原地贴图", "P"}, {"save", "保存", "Ctrl+S"},
 	{"close", "取消", "Esc"}, {"check", "完成", "Enter"},
 }
 

@@ -73,25 +73,7 @@ func copyImage(owner uintptr, img *image.RGBA) error {
 		return errors.New("无法注册 PNG 剪贴板格式")
 	}
 	// Allocate both formats before taking ownership of the user's clipboard.
-	alloc := func(data []byte) (uintptr, error) {
-		h := call(kernel32, "GlobalAlloc", 2, len(data))
-		if h == 0 {
-			return 0, errors.New("无法分配剪贴板内存")
-		}
-		address := call(kernel32, "GlobalLock", h)
-		if address == 0 {
-			call(kernel32, "GlobalFree", h)
-			return 0, errors.New("无法锁定剪贴板内存")
-		}
-		err := windows.WriteProcessMemory(windows.CurrentProcess(), address, &data[0], uintptr(len(data)), nil)
-		call(kernel32, "GlobalUnlock", h)
-		if err != nil {
-			call(kernel32, "GlobalFree", h)
-			return 0, err
-		}
-		return h, nil
-	}
-	pngHandle, err := alloc(encoded)
+	pngHandle, err := clipboardMemory(encoded)
 	if err != nil {
 		return err
 	}
@@ -100,7 +82,7 @@ func copyImage(owner uintptr, img *image.RGBA) error {
 			call(kernel32, "GlobalFree", pngHandle)
 		}
 	}()
-	dibHandle, err := alloc(makeDIB(img))
+	dibHandle, err := clipboardMemory(makeDIB(img))
 	if err != nil {
 		return err
 	}
@@ -109,22 +91,14 @@ func copyImage(owner uintptr, img *image.RGBA) error {
 			call(kernel32, "GlobalFree", dibHandle)
 		}
 	}()
-	opened := false
-	for i := 0; i < 5; i++ {
-		if call(user32, "OpenClipboard", owner) != 0 {
-			opened = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !opened {
+	if !openClipboard(owner) {
 		return errors.New("剪贴板正被其他应用占用，请重试复制或保存图片")
 	}
 	defer call(user32, "CloseClipboard")
 	if call(user32, "EmptyClipboard") == 0 {
 		return errors.New("无法更新剪贴板")
 	}
-	if call(user32, "SetClipboardData", 8, dibHandle) == 0 {
+	if call(user32, "SetClipboardData", cfDIB, dibHandle) == 0 {
 		return errors.New("写入剪贴板失败，请重试")
 	}
 	dibHandle = 0 // ownership transferred to Windows

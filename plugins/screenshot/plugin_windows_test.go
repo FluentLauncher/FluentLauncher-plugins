@@ -23,7 +23,7 @@ func TestQueryAndActivity(t *testing.T) {
 	d := &desktop{}
 	h := handler{d}
 	rows, err := h.Query(context.Background(), pluginsdk.Query{Text: "区域", MaxResults: 20})
-	if err != nil || len(rows) != 3 { // region, region-pin, record
+	if err != nil || len(rows) != 4 { // region, region-pin, ocr, record
 		t.Fatalf("region menu: %v %v", rows, err)
 	}
 	if err := h.ExecuteCommand(context.Background(), pluginsdk.ExecuteCommandRequest{CommandID: "missing"}); err == nil {

@@ -1,7 +1,7 @@
 {
   "id": "official.screenshot",
   "name": "截图与贴图",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "protocolVersion": 1,
   "executable": "screenshot.exe",
   "keywords": [
@@ -10,10 +10,12 @@
     "snap",
     "截屏",
     "录屏",
-    "record"
+    "record",
+    "ocr",
+    "文字识别"
   ],
   "permissions": [],
-  "description": "截图标注、原地贴图与录制（MP4 可带系统声音和麦克风，或 GIF）；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
+  "description": "截图标注、文字识别（OCR，本机完成）、原地贴图与录制（MP4 可带系统声音和麦克风，或 GIF）；长截图由用户滚动，细线预览、底部操作、持续选区框，自动拼接且不驱动滚动。主题菜单与像素放大镜。仅主动捕获，不上传、不留历史。材质同步需新版宿主。",
   "commands": [
     {
       "id": "region",
@@ -32,6 +34,21 @@
       "defaultShortcuts": [
         "Ctrl+Alt+P"
       ]
+    },
+    {
+      "id": "ocr",
+      "title": "区域文字识别",
+      "scope": "global",
+      "activation": "invoke",
+      "defaultShortcuts": [
+        "Ctrl+Alt+O"
+      ]
+    },
+    {
+      "id": "pin-clipboard",
+      "title": "贴出剪贴板图片",
+      "scope": "global",
+      "activation": "invoke"
     },
     {
       "id": "screen",
@@ -79,5 +96,5 @@
   "icon": "assets/icon.png",
   "author": "FluentLauncher",
   "homepage": "https://github.com/FluentLauncher/FluentLauncher-plugins",
-  "usage": "输入 截图 选择截图方式；在快捷键页启用区域截图或贴图命令。长截图由你滚动，插件自动拼接。输入 录屏 或点工具条上的录制按钮录制 MP4 / GIF，保存在系统视频文件夹。"
+  "usage": "输入 截图 选择截图方式；在快捷键页启用区域截图、文字识别或贴图命令。工具条上的识别按钮（O）把选区里的文字复制到剪贴板。长截图由你滚动，插件自动拼接。输入 录屏 或点工具条上的录制按钮录制 MP4 / GIF，保存在系统视频文件夹。"
 }

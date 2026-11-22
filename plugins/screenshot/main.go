@@ -20,6 +20,8 @@ type menuEntry struct{ id, title, subtitle string }
 var entries = []menuEntry{
 	{"region", "区域截图", "拖选并调整 · Enter 复制 / Ctrl+S 保存 / P 贴图 / Esc 取消"},
 	{"region-pin", "区域截图并原地贴图", "确认后原位覆盖 · 默认阴影 · 点击后方向键微调"},
+	{"ocr", "区域文字识别", "拖选后 Enter 识别文字并复制 · 使用 Windows 自带的识别，不联网"},
+	{"pin-clipboard", "贴出剪贴板图片", "把剪贴板里的图片作为贴图显示在鼠标所在的显示器中央"},
 	{"screen", "当前显示器截图", "复制鼠标所在显示器的画面，默认包含已有贴图"},
 	{"all", "所有显示器截图", "复制整个虚拟桌面，默认包含已有贴图"},
 	{"quick-save", "所有显示器截图并快速保存", "保存到系统图片文件夹下的 FluentLauncher"},
@@ -83,7 +85,7 @@ func (h handler) execute(ctx context.Context, id string) error {
 	if !valid {
 		return fmt.Errorf("未知截图命令：%s", id)
 	}
-	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" || id == "record" || id == "record-screen" || id == "scroll-auto" || id == "scroll-manual" {
+	if id == "region" || id == "region-pin" || id == "screen" || id == "all" || id == "quick-save" || id == "record" || id == "ocr" || id == "record-screen" || id == "scroll-auto" || id == "scroll-manual" {
 		if !h.desktop.capturing.CompareAndSwap(false, true) {
 			return errors.New("已有截图正在进行，请先完成或取消")
 		}

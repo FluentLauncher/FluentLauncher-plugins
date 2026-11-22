@@ -146,6 +146,18 @@ func icon(dc uintptr, name string, r image.Rectangle, c uint32) {
 		l(7, 7, 3, 11)
 		l(3, 11, 3, 16)
 		l(3, 16, 12, 16)
+	case "ocr": // text lines inside scan corners
+		l(2, 6, 2, 2)
+		l(2, 2, 6, 2)
+		l(14, 2, 18, 2)
+		l(18, 2, 18, 6)
+		l(18, 14, 18, 18)
+		l(18, 18, 14, 18)
+		l(6, 18, 2, 18)
+		l(2, 18, 2, 14)
+		l(6, 7, 14, 7)
+		l(6, 10, 14, 10)
+		l(6, 13, 11, 13)
 	case "scroll":
 		box(3, 2, 12, 18)
 		l(5, 6, 10, 6)

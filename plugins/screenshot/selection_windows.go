@@ -23,6 +23,7 @@ type selectionWindow struct {
 	snapOff                   bool // the current press moved far enough to be a drag
 	preferPin                 bool
 	preferRecord              bool // opened by the record command: Enter starts recording
+	preferOCR                 bool // opened by the text command: Enter recognizes and copies text
 	busy                      bool
 	cursor                    image.Point
 	toolbarHover              int
@@ -88,7 +89,7 @@ func (s *selectionWindow) close() {
 
 func (s *selectionWindow) toolbar() image.Rectangle {
 	scale := max(1.0, float64(call(user32, "GetDpiForWindow", s.hwnd))/96)
-	w, h := px(428, scale), px(34, scale)
+	w, h := px(458, scale), px(34, scale)
 	if s.tool != "" {
 		h = px(64, scale)
 	}
@@ -287,6 +288,8 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		case 'R', 'E', 'B', 'T':
 			s.tool = map[uintptr]string{'R': "rect", 'E': "ellipse", 'B': "pen", 'T': "text"}[wparam]
 			invalidate(s.hwnd)
+		case 'O':
+			s.output("ocr")
 		case 'L':
 			s.output("scroll")
 		case 'V':
@@ -319,6 +322,9 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 }
 
 func (s *selectionWindow) defaultOutput() string {
+	if s.preferOCR {
+		return "ocr"
+	}
 	if s.preferRecord {
 		return "record"
 	}
@@ -466,12 +472,39 @@ func (s *selectionWindow) output(kind string) {
 				restored := s.d.selection
 				restored.selected, restored.marks, restored.redo, restored.tool = s.selected, s.marks, s.redo, s.tool
 				restored.ink, restored.strokeWidth, restored.preferRecord, restored.snaps = s.ink, s.strokeWidth, s.preferRecord, s.snaps
+				restored.preferOCR = s.preferOCR
 				s.d.capturing.Store(true)
 			}
 		}
 		return
 	}
 	img := crop(s.image, s.selected)
+	if kind == "ocr" {
+		// Recognize the frozen pixels themselves: annotations would cover the text.
+		s.busy = true
+		invalidate(s.hwnd)
+		s.d.active.Add(1)
+		go func() {
+			text, err := s.d.recognize(img)
+			if err == nil {
+				err = s.d.writeText(text)
+			}
+			_ = s.d.post(func() {
+				defer s.d.active.Add(-1)
+				if s.d.selection != s {
+					return
+				}
+				s.busy = false
+				if err == nil {
+					s.close()
+				} else {
+					s.d.report(s.hwnd, err)
+					invalidate(s.hwnd)
+				}
+			})
+		}()
+		return
+	}
 	var err error
 	img, err = renderAnnotations(img, s.annotationMarks())
 	if err != nil {

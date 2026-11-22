@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"sync/atomic"
 )
 
 type selectionWindow struct {
@@ -21,6 +22,9 @@ type selectionWindow struct {
 	dragMode                  int // 0 idle, 1 new, 2 move, 4/8/16/32 resize edges
 	snaps                     []snapTarget
 	snapOff                   bool // the current press moved far enough to be a drag
+	snapLeaf                  image.Rectangle
+	snapLevel                 int         // steps outward from the smallest part, chosen with the wheel
+	closed                    atomic.Bool // tells background work that this selection is gone
 	preferPin                 bool
 	preferRecord              bool // opened by the record command: Enter starts recording
 	preferOCR                 bool // opened by the text command: Enter recognizes and copies text
@@ -74,6 +78,7 @@ func (s *selectionWindow) close() {
 		return
 	}
 	s.d.selection = nil
+	s.closed.Store(true)
 	s.finishText(false)
 	call(user32, "ReleaseCapture")
 	call(user32, "DestroyWindow", s.hwnd)
@@ -146,6 +151,11 @@ func (s *selectionWindow) handle(msg uint32, wparam, lparam uintptr) uintptr {
 		call(gdi32, "SetTextColor", wparam, rgbRef(s.ink))
 		call(gdi32, "SetBkColor", wparam, rgbRef(s.d.theme.Background))
 		return s.editBrush
+	case wmMouseWheel:
+		if !s.busy && s.dragMode == 0 {
+			s.snapWheel(int16(wparam>>16) > 0)
+		}
+		return 0
 	case wmLButtonDbl:
 		if !s.busy && s.tool == "" && !s.selected.Empty() && mousePoint(lparam).In(s.selected) && !mousePoint(lparam).In(s.toolbar()) {
 			s.output(s.defaultOutput())
@@ -427,7 +437,7 @@ func (s *selectionWindow) draw(dc uintptr) {
 		if snap := s.snapCandidate(); !snap.Empty() {
 			s.background.draw(dc, snap, snap)
 			frame(dc, snap, s.d.theme.Accent, 2)
-			hint = fmt.Sprintf("%d × %d · 单击选中窗口，拖动自选区域 · Esc / 右键取消", snap.Dx(), snap.Dy())
+			hint = fmt.Sprintf("%d × %d · 单击选中，滚轮切换范围，拖动自选区域 · Esc / 右键取消", snap.Dx(), snap.Dy())
 		}
 		r := image.Rect(16, 16, min(s.image.Rect.Dx()-16, 650), 52)
 		roundPanel(dc, r, px(int(s.d.theme.Radius), uiScale(s.hwnd)), s.d.theme.Background, s.d.theme.Border)

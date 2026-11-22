@@ -34,7 +34,7 @@ func snapTargets() []snapTarget {
 		if !ok {
 			continue
 		}
-		out = append(out, snapTarget{bounds, snapChildren(hwnd, bounds, 1, &budget)})
+		out = append(out, snapTarget{bounds: bounds, children: snapChildren(hwnd, bounds, 1, &budget), hwnd: hwnd})
 	}
 	return out
 }
@@ -96,26 +96,58 @@ func snapChildren(parent uintptr, clip image.Rectangle, depth int, budget *int) 
 		if bounds.Dx() < snapMinSize || bounds.Dy() < snapMinSize {
 			continue
 		}
-		out = append(out, snapTarget{bounds, snapChildren(hwnd, bounds, depth+1, budget)})
+		out = append(out, snapTarget{bounds: bounds, children: snapChildren(hwnd, bounds, depth+1, budget)})
 	}
 	return out
 }
 
-// snapCandidate is the window a plain click selects: the one under the pointer
-// while nothing is selected, or under the press until it turns into a drag.
-// Coordinates are local to the frozen image, like the selection itself.
-func (s *selectionWindow) snapCandidate() image.Rectangle {
+// snapPath lists what a plain click could select, largest first: the window
+// under the pointer and its parts while nothing is selected, or under the
+// press until it turns into a drag. Coordinates are in desktop pixels.
+func (s *selectionWindow) snapPath() []image.Rectangle {
 	if len(s.snaps) == 0 || !s.d.preferences.SnapWindows || s.busy || s.snapOff || s.dragMode > 1 || !s.selected.Empty() {
-		return image.Rectangle{}
+		return nil
 	}
 	p := s.cursor
 	if s.dragMode == 1 {
 		p = s.anchor
 	}
 	p = p.Add(s.desktopBounds.Min)
-	r := snapAt(s.snaps, p)
-	if r.Empty() {
-		r = currentMonitor(p) // bare desktop
+	chain := snapChain(s.snaps, p)
+	if len(chain) == 0 {
+		return []image.Rectangle{currentMonitor(p)} // bare desktop
 	}
-	return r.Sub(s.desktopBounds.Min).Intersect(s.image.Bounds())
+	if !s.d.preferences.SnapElements {
+		return chain[:1]
+	}
+	return chain
+}
+
+// snapCandidate is the entry of snapPath the wheel has chosen, local to the
+// frozen image like the selection itself. Pointing at another part starts
+// from the smallest one again.
+func (s *selectionWindow) snapCandidate() image.Rectangle {
+	chain := s.snapPath()
+	if len(chain) == 0 {
+		return image.Rectangle{}
+	}
+	if leaf := chain[len(chain)-1]; leaf != s.snapLeaf {
+		s.snapLeaf, s.snapLevel = leaf, 0
+	}
+	s.snapLevel = max(0, min(s.snapLevel, len(chain)-1))
+	return chain[len(chain)-1-s.snapLevel].Sub(s.desktopBounds.Min).Intersect(s.image.Bounds())
+}
+
+// snapWheel moves between the part under the pointer and the windows around it.
+func (s *selectionWindow) snapWheel(outward bool) {
+	if s.snapCandidate().Empty() {
+		return
+	}
+	if outward {
+		s.snapLevel++
+	} else {
+		s.snapLevel--
+	}
+	s.snapCandidate() // clamp to the path
+	invalidate(s.hwnd)
 }

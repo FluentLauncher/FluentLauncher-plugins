@@ -206,6 +206,7 @@ type preferences struct {
 	IncludePins  bool              `json:"includePins"`
 	NewPinShadow bool              `json:"newPinShadow"`
 	SnapWindows  bool              `json:"snapWindows"`
+	SnapElements bool              `json:"snapElements"`
 	Recording    recordPreferences `json:"recording"`
 }
 
@@ -214,7 +215,7 @@ func preferencesPath() string {
 }
 func loadPreferences() preferences {
 	// Fields missing from an older file keep their defaults.
-	p := preferences{IncludePins: true, NewPinShadow: true, SnapWindows: true, Recording: defaultRecordPreferences()}
+	p := preferences{IncludePins: true, NewPinShadow: true, SnapWindows: true, SnapElements: true, Recording: defaultRecordPreferences()}
 	if data, err := os.ReadFile(preferencesPath()); err == nil {
 		_ = json.Unmarshal(data, &p)
 	}

@@ -325,6 +325,10 @@ func (d *desktop) startCapture(id string) {
 				}
 				if d.selection != nil {
 					d.selection.preferRecord, d.selection.preferOCR, d.selection.snaps = id == "record", id == "ocr", targets
+					if d.preferences.SnapWindows && d.preferences.SnapElements && len(targets) > 0 {
+						d.active.Add(1)
+						go d.refineSnaps(d.selection, append([]snapTarget(nil), targets...), cursorPoint())
+					}
 					invalidate(d.selection.hwnd)
 				}
 				return
@@ -387,6 +391,7 @@ func (d *desktop) settingsMenu() {
 		{ID: 3, Label: "录制时包含鼠标指针", Checked: d.preferences.Recording.Cursor},
 		{ID: 4, Label: "录制前倒计时 3 秒", Checked: d.preferences.Recording.Countdown},
 		{ID: 5, Label: "截图时自动吸附窗口", Checked: d.preferences.SnapWindows},
+		{ID: 6, Label: "吸附到窗口内的界面元素", Checked: d.preferences.SnapElements, Disabled: !d.preferences.SnapWindows},
 	}, func(id int) {
 		previous := d.preferences
 		switch id {
@@ -400,6 +405,8 @@ func (d *desktop) settingsMenu() {
 			d.preferences.Recording.Countdown = !d.preferences.Recording.Countdown
 		case 5:
 			d.preferences.SnapWindows = !d.preferences.SnapWindows
+		case 6:
+			d.preferences.SnapElements = !d.preferences.SnapElements
 		}
 		if err := savePreferences(d.preferences); err != nil {
 			d.preferences = previous

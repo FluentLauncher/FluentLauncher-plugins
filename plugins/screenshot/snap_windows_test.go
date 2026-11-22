@@ -88,7 +88,7 @@ func TestSnapClickSelectsWindowAndDragOverrides(t *testing.T) {
 
 func TestSnapPreferenceDefaultsOn(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
-	if !loadPreferences().SnapWindows {
+	if p := loadPreferences(); !p.SnapWindows || !p.SnapElements {
 		t.Fatal("snap is not on by default")
 	}
 	if err := os.MkdirAll(filepath.Dir(preferencesPath()), 0755); err != nil {
@@ -98,7 +98,7 @@ func TestSnapPreferenceDefaultsOn(t *testing.T) {
 	if err := os.WriteFile(preferencesPath(), []byte(`{"includePins":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if !loadPreferences().SnapWindows {
+	if p := loadPreferences(); !p.SnapWindows || !p.SnapElements {
 		t.Fatal("old settings turned snap off")
 	}
 	p := loadPreferences()
